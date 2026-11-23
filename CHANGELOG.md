@@ -5,6 +5,12 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
+## [0.1.4](https://github.com/luismasuarez/vitals/compare/v0.1.3...v0.1.4) - 2026-11-23
+
+### Añadido
+
+- **net**: listen on IPv4 only unless bind_ipv6 is enabled
+
 ## [0.1.3](https://github.com/luismasuarez/vitals/compare/v0.1.2...v0.1.3) - 2026-11-24
 
 ### Corregido

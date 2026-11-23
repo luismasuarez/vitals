@@ -5,8 +5,8 @@ plugins {
 }
 
 // Release pipeline overrides: -PvitalsVersionName=0.2.0 -PvitalsVersionCode=200
-val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse("0.1.3")
-val vitalsVersionCode = providers.gradleProperty("vitalsVersionCode").getOrElse("103").toInt()
+val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse("0.1.4")
+val vitalsVersionCode = providers.gradleProperty("vitalsVersionCode").getOrElse("104").toInt()
 val vitalsKeystore = providers.gradleProperty("vitalsKeystore").orNull
 
 android {
