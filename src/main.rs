@@ -110,7 +110,12 @@ async fn main() -> Result<()> {
 async fn serve(cfg: Config, paths: Paths) -> Result<()> {
     let store = Arc::new(Store::open(&paths.db)?);
 
-    let candidates = net::candidates(cfg.bind_mode, cfg.allow_public, &cfg.extra_bind_addrs)?;
+    let candidates = net::candidates(
+        cfg.bind_mode,
+        cfg.allow_public,
+        &cfg.extra_bind_addrs,
+        cfg.bind_ipv6,
+    )?;
     if candidates.is_empty() {
         bail!(
             "no bindable address: check bind_mode and allow_public in {}",
@@ -132,7 +137,8 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
 
     // The address set changes over time (DHCP, Wi-Fi roam, VPN up/down), so the
     // supervisor below recomputes it and rewrites this list.
-    let endpoints: Arc<std::sync::RwLock<Vec<String>>> = Arc::new(std::sync::RwLock::new(Vec::new()));
+    let endpoints: Arc<std::sync::RwLock<Vec<String>>> =
+        Arc::new(std::sync::RwLock::new(Vec::new()));
 
     let host = build_host_info(&hostname);
     let (tx, _) = broadcast::channel::<Arc<Sample>>(16);
@@ -270,12 +276,18 @@ async fn supervise_listeners(
     app: axum::Router,
     endpoints: Arc<std::sync::RwLock<Vec<String>>>,
 ) {
-    let mut active: std::collections::HashMap<IpAddr, BoundListener> = std::collections::HashMap::new();
+    let mut active: std::collections::HashMap<IpAddr, BoundListener> =
+        std::collections::HashMap::new();
     let mut last_endpoints: Vec<String> = Vec::new();
 
     loop {
-        let candidates =
-            net::candidates(cfg.bind_mode, cfg.allow_public, &cfg.extra_bind_addrs).unwrap_or_default();
+        let candidates = net::candidates(
+            cfg.bind_mode,
+            cfg.allow_public,
+            &cfg.extra_bind_addrs,
+            cfg.bind_ipv6,
+        )
+        .unwrap_or_default();
         let wanted: Vec<IpAddr> = candidates.iter().map(|c| c.addr).collect();
         let current: Vec<IpAddr> = active.keys().copied().collect();
         let (stop, start) = net::plan_changes(&current, &wanted);

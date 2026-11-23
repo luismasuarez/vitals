@@ -188,7 +188,8 @@ vitals1:<base64url(sin padding) de este JSON>
 ```
 
 `name` es el hostname del agente y `dev` la etiqueta del dispositivo que se
-está emparejando (`vitals pair --name`). `pin` = base64url de los primeros 16
+está emparejando (`vitals pair --name`). Por defecto `ep` sólo trae IPv4;
+`bind_ipv6 = true` añade las direcciones IPv6. `pin` = base64url de los primeros 16
 bytes de SHA-256 sobre el DER del certificado. `ep` va ordenado: LAN primero
 (menor latencia en casa), Tailscale después. `exp` es segundos UNIX.
 

@@ -180,6 +180,7 @@ de código y revocación. La app se probó en un Galaxy A54 contra el agente rea
 
 ## Limitaciones conocidas
 
+- IPv4 por defecto. `bind_ipv6 = true` en la configuración añade IPv6.
 - Un solo host por sesión. Varios hosts implican varias sesiones, no
   implementado todavía.
 - El token de Android está en SharedPreferences; en producción corresponde al

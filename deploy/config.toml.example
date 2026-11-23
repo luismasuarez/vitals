@@ -10,6 +10,10 @@ bind_mode = "auto"
 # Only matters with bind_mode = "auto". Keep false on a VPS.
 allow_public = false
 
+# IPv4 only by default. Tailscale already works over IPv4; enabling IPv6
+# adds listeners and endpoints that mobile clients rarely need.
+bind_ipv6 = false
+
 # Sampling cadence. 1000 ms feeds SSE smoothly without much CPU.
 sample_interval_ms = 1000
 

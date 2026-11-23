@@ -23,6 +23,9 @@ pub struct Config {
     pub bind_mode: BindMode,
     /// Opt-in to binding on public addresses. Ignored when bind_mode = "all".
     pub allow_public: bool,
+    /// Listen on IPv6 too. Off by default: the pairing payload stays short and
+    /// the client only needs IPv4 or Tailscale.
+    pub bind_ipv6: bool,
     pub sample_interval_ms: u64,
     /// Persist one history row every N samples.
     pub persist_every: u32,
@@ -38,6 +41,7 @@ impl Default for Config {
             port: 8443,
             bind_mode: BindMode::Auto,
             allow_public: false,
+            bind_ipv6: false,
             sample_interval_ms: 1000,
             persist_every: 10,
             retention_raw_hours: 24,

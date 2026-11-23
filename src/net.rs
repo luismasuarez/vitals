@@ -65,6 +65,10 @@ pub fn classify(ip: IpAddr) -> Kind {
     }
 }
 
+fn wanted_family(ip: IpAddr, include_ipv6: bool) -> bool {
+    include_ipv6 || !ip.is_ipv6()
+}
+
 fn is_virtual_iface(name: &str) -> bool {
     VIRTUAL_PREFIXES.iter().any(|p| name.starts_with(p))
 }
@@ -81,12 +85,16 @@ pub fn candidates(
     mode: crate::config::BindMode,
     allow_public: bool,
     extra: &[IpAddr],
+    include_ipv6: bool,
 ) -> Result<Vec<Candidate>> {
     use crate::config::BindMode;
 
     let mut out: Vec<Candidate> = Vec::new();
     for iface in if_addrs::get_if_addrs()? {
         let ip = iface.addr.ip();
+        if !wanted_family(ip, include_ipv6) {
+            continue;
+        }
         if is_link_local(ip) {
             continue;
         }
@@ -113,6 +121,9 @@ pub fn candidates(
     }
 
     for ip in extra {
+        if !wanted_family(*ip, include_ipv6) {
+            continue;
+        }
         if out.iter().any(|c| c.addr == *ip) {
             continue;
         }
@@ -193,6 +204,13 @@ mod tests {
         assert!(is_virtual_iface("veth24f5227"));
         assert!(!is_virtual_iface("enp2s0"));
         assert!(!is_virtual_iface("tailscale0"));
+    }
+
+    #[test]
+    fn ipv6_is_opt_in() {
+        assert!(wanted_family(v4("192.168.1.5"), false));
+        assert!(!wanted_family(v6("fd7a:115c:a1e0::1"), false));
+        assert!(wanted_family(v6("fd7a:115c:a1e0::1"), true));
     }
 
     #[test]
