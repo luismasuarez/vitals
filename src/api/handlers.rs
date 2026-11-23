@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
@@ -12,7 +12,8 @@ use serde_json::{json, Value};
 use tokio_stream::wrappers::BroadcastStream;
 
 use super::AppState;
-use crate::auth::{new_device_token, normalize_code, sha256_hex};
+use crate::auth::{new_device_token, normalize_code, sha256_hex, AuthDevice};
+use crate::caps::{self, Manifest};
 use crate::collect::{ProcRow, Sort};
 use crate::store::{now_ts, Device};
 
@@ -219,6 +220,105 @@ pub async fn alerts(State(st): State<AppState>, Query(q): Query<AlertsQuery>) ->
         "events": st.store.query_alert_events(q.limit.unwrap_or(50), q.before),
         "predictions": crate::alerts::predictions(&st.store, now),
         "retention_days": 30,
+    }))
+}
+
+fn diagnostic_report(st: &AppState) -> crate::diagnostics::Report {
+    let sample = st.last.lock().ok().and_then(|slot| slot.clone());
+    let endpoints = st
+        .endpoints
+        .read()
+        .map(|list| list.clone())
+        .unwrap_or_default();
+    let rules = st.store.alert_rules_view().len();
+    let now = now_ts();
+    let predictions = crate::alerts::predictions(&st.store, now);
+    crate::diagnostics::report(
+        &st.host,
+        sample.as_deref(),
+        &endpoints,
+        rules,
+        &predictions,
+        st.state_dir.as_path(),
+    )
+}
+
+/// Any token can read what is wrong; it is still a GET.
+pub async fn diagnostics(State(st): State<AppState>) -> Json<Value> {
+    let report = diagnostic_report(&st);
+    Json(json!({
+        "generated_at": now_ts(),
+        "findings": report.findings,
+    }))
+}
+
+/// Same findings, flattened into copy-pasteable commands. Nothing is executed.
+pub async fn suggest(State(st): State<AppState>) -> Json<Value> {
+    let report = diagnostic_report(&st);
+    Json(json!({
+        "generated_at": now_ts(),
+        "suggestions": report.suggestions,
+    }))
+}
+
+/// Operator only: the grant state of this device, including pending requests
+/// and their 6-character code.
+pub async fn caps(
+    State(st): State<AppState>,
+    Extension(device): Extension<AuthDevice>,
+) -> Json<Value> {
+    let manifest = Manifest::load_or_empty(&st.caps_manifest);
+    let pending: std::collections::HashMap<_, _> = st
+        .store
+        .pending_cap_requests_for(&device.id)
+        .into_iter()
+        .map(|request| (request.cap.clone(), request))
+        .collect();
+
+    let capabilities: Vec<Value> = caps::CATALOG
+        .iter()
+        .map(|capability| {
+            let granted = caps::is_allowed(&manifest, &device.id, device.scope, capability.id);
+            let grant = manifest.grant_for(&device.id, capability.id);
+            let request = pending.get(capability.id);
+            let state = if granted {
+                "granted"
+            } else if request.is_some() {
+                "pending"
+            } else {
+                "not_granted"
+            };
+            let params = grant
+                .and_then(|grant| grant.params.as_ref())
+                .map(|table| caps::toml_to_json(&toml::Value::Table(table.clone())))
+                .or_else(|| {
+                    request.and_then(|request| serde_json::from_str::<Value>(&request.params).ok())
+                })
+                .unwrap_or(Value::Null);
+            json!({
+                "id": capability.id,
+                "risk": capability.risk.as_str(),
+                "approvable": capability.approvable,
+                "state": state,
+                "granted_by": if granted {
+                    Some(if capability.approvable { "manifest" } else { "scope" })
+                } else {
+                    None
+                },
+                "params": params,
+                "request": request.map(|request| json!({
+                    "id": request.id,
+                    "code": request.code,
+                    "expires_at": request.expires_at,
+                })),
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "device_id": device.id,
+        "scope": device.scope.as_str(),
+        "capabilities": capabilities,
     }))
 }
 

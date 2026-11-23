@@ -10,7 +10,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.vitals.app.core.AgentInfo
+import dev.vitals.app.core.AlertReport
 import dev.vitals.app.core.ApiException
+import dev.vitals.app.core.CapsReport
+import dev.vitals.app.core.DiagnosticsReport
 import dev.vitals.app.core.HostInfo
 import dev.vitals.app.core.Pairing
 import dev.vitals.app.core.PairingPayload
@@ -24,13 +27,19 @@ import dev.vitals.app.core.Wire
 import dev.vitals.app.ui.OnboardStep
 import dev.vitals.app.ui.Screen
 import dev.vitals.app.ui.Transport
+import dev.vitals.app.watchdog.WatchState
+import dev.vitals.app.watchdog.Watchdog
+import dev.vitals.app.watchdog.WatchdogState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.security.cert.CertificateException
 import javax.net.ssl.SSLException
@@ -58,12 +67,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var session by mutableStateOf<Session?>(store.load())
         private set
+    var tokenStorage by mutableStateOf(store.tokenStorage())
+        private set
+
+    /** User preference: keep a foreground watchdog for the paired host. */
+    var watching by mutableStateOf(Watchdog.isEnabled(app))
+        private set
+    var watchState by mutableStateOf(WatchState())
+        private set
+
     var host by mutableStateOf<HostInfo?>(null)
     var agent by mutableStateOf<AgentInfo?>(null)
     var sample by mutableStateOf<Sample?>(null)
     var series by mutableStateOf(Series())
     var history by mutableStateOf<List<Point>>(emptyList())
     var procs by mutableStateOf<List<Proc>>(emptyList())
+
+    var alertReport by mutableStateOf<AlertReport?>(null)
+    var alertsError by mutableStateOf<String?>(null)
+    var alertsBusy by mutableStateOf(false)
+    var capsReport by mutableStateOf<CapsReport?>(null)
+    var capsError by mutableStateOf<String?>(null)
+    var capsBusy by mutableStateOf(false)
+    var diagnostics by mutableStateOf<DiagnosticsReport?>(null)
+    var diagnosticsError by mutableStateOf<String?>(null)
 
     var transport by mutableStateOf(Transport.Idle)
     var latency by mutableStateOf<Long?>(null)
@@ -91,15 +118,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val endpoints: List<String> get() = session?.endpoints.orEmpty()
     val activeEndpoint: String get() = endpoints.getOrElse(endpointIndex) { "" }
+    val isOperator: Boolean get() = session?.scope == "operator"
 
     init {
+        viewModelScope.launch {
+            WatchdogState.state.collect { watchState = it }
+        }
         if (session != null) boot()
     }
 
     /* ------------------------------- lifecycle ------------------------------ */
 
     fun onVisible() {
-        if (session != null && transport != Transport.Sse) startStream()
+        watching = Watchdog.isEnabled(getApplication())
+        if (session != null) {
+            if (watching) Watchdog.start(getApplication())
+            if (transport != Transport.Sse) startStream()
+        }
     }
 
     fun onHidden() {
@@ -133,8 +168,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val fresh = info?.endpoints.orEmpty()
                 if (fresh.isNotEmpty() && fresh != current.endpoints) {
                     val updated = current.copy(endpoints = fresh)
-                    store.save(updated)
+                    if (!store.save(updated)) {
+                        toast = "No pude guardar la sesión cifrada"
+                    }
                     session = updated
+                    tokenStorage = store.tokenStorage()
                     endpointIndex = 0
                     effective = VitalsApi(updated)
                 }
@@ -276,6 +314,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         screen = target
         if (target == Screen.Procs) startProcPolling() else stopProcPolling()
         if (target == Screen.Net && netRange != "live" && history.isEmpty()) loadHistory(netRange)
+        if (target == Screen.Rules) loadAlerts()
+        if (target == Screen.Caps) loadCaps()
     }
 
     fun loadHistory(range: String) {
@@ -321,6 +361,188 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         procFilter = text
     }
 
+    /* --------------------------------- alerts ------------------------------- */
+
+    fun loadAlerts() {
+        if (!isOperator) {
+            alertsError = "Necesitas un token operator. Reempareja con: vitals pair --operator"
+            return
+        }
+        if (alertsBusy) return
+        alertsBusy = true
+        alertsError = null
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                alertReport = client.alerts()
+            } catch (e: Throwable) {
+                alertsError = commandFailure(e)
+            } finally {
+                alertsBusy = false
+            }
+        }
+    }
+
+    /** The three templates are deliberately small: id, kind and one threshold. */
+    fun applyAlertTemplate(kind: String) {
+        val template = when (kind) {
+            "disk" -> JSONObject()
+                .put("id", "disk-root")
+                .put("kind", "disk")
+                .put("mount", "/")
+                .put("percent", 85)
+                .put("days", 7)
+            "memory" -> JSONObject()
+                .put("id", "memory")
+                .put("kind", "memory")
+                .put("percent", 90)
+            "temperature" -> JSONObject()
+                .put("id", "temperature")
+                .put("kind", "temperature")
+                .put("celsius", 85)
+            else -> return
+        }
+        val id = template.getString("id")
+        val rules = JSONArray()
+        alertReport?.rules?.filter { it.id != id }?.forEach { rules.put(it.toJson()) }
+        rules.put(template)
+        setAlertRules(rules, "Regla $id guardada")
+    }
+
+    fun deleteAlert(id: String) {
+        if (!isOperator) return
+        alertsBusy = true
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                client.command("alerts.delete", JSONObject().put("id", id))
+                alertReport = client.alerts()
+                toast = "Regla $id eliminada"
+            } catch (e: Throwable) {
+                alertsError = commandFailure(e)
+            } finally {
+                alertsBusy = false
+            }
+        }
+    }
+
+    fun silenceAlerts(minutes: Int) {
+        if (!isOperator) return
+        alertsBusy = true
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                client.command("alerts.silence", JSONObject().put("minutes", minutes))
+                alertReport = client.alerts()
+                toast = if (minutes < 60) "Alertas silenciadas ${minutes} min" else "Alertas silenciadas ${minutes / 60} h"
+            } catch (e: Throwable) {
+                alertsError = commandFailure(e)
+            } finally {
+                alertsBusy = false
+            }
+        }
+    }
+
+    private fun setAlertRules(rules: JSONArray, message: String) {
+        if (!isOperator) {
+            alertsError = "Necesitas un token operator. Reempareja con: vitals pair --operator"
+            return
+        }
+        alertsBusy = true
+        alertsError = null
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                client.command("alerts.set", JSONObject().put("rules", rules))
+                alertReport = client.alerts()
+                toast = message
+            } catch (e: Throwable) {
+                alertsError = commandFailure(e)
+            } finally {
+                alertsBusy = false
+            }
+        }
+    }
+
+    /* ------------------------------ capabilities ---------------------------- */
+
+    fun loadCaps() {
+        if (!isOperator) {
+            capsError = "Necesitas un token operator. Reempareja con: vitals pair --operator"
+            return
+        }
+        if (capsBusy) return
+        capsBusy = true
+        capsError = null
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                capsReport = client.caps()
+            } catch (e: Throwable) {
+                capsError = commandFailure(e)
+            } finally {
+                capsBusy = false
+            }
+        }
+    }
+
+    fun requestCapability(cap: String, unit: String?, maxBytesMb: Long?) {
+        if (!isOperator) return
+        val args = JSONObject().put("cap", cap)
+        if (unit != null) {
+            args.put("units", JSONArray().put(unit.trim()))
+        }
+        if (maxBytesMb != null) {
+            args.put("max_bytes", maxBytesMb * 1024 * 1024)
+        }
+        capsBusy = true
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                val response = client.command("caps.request", args)
+                val code = response.optJSONObject("result")?.optString("code").orEmpty()
+                capsReport = client.caps()
+                toast = if (code.isNotBlank()) "Solicitud enviada: código $code" else "Solicitud enviada"
+            } catch (e: Throwable) {
+                capsError = commandFailure(e)
+            } finally {
+                capsBusy = false
+            }
+        }
+    }
+
+    /* ------------------------------- diagnostics ---------------------------- */
+
+    fun loadDiagnostics() {
+        diagnosticsError = null
+        viewModelScope.launch {
+            try {
+                val client = api ?: return@launch
+                val findings = client.diagnostics()
+                val suggestions = runCatching { client.suggestions() }.getOrDefault(emptyList())
+                diagnostics = DiagnosticsReport(
+                    findings = findings.findings,
+                    suggestions = suggestions,
+                )
+            } catch (e: Throwable) {
+                diagnosticsError = e.message ?: "Diagnóstico no disponible"
+            }
+        }
+    }
+
+    private fun commandFailure(e: Throwable): String {
+        if (e is ApiException && e.status == 401) {
+            forget("La sesión ya no es válida. Vuelve a emparejar.")
+            return "Sesión no válida"
+        }
+        return when {
+            e is ApiException && e.status == 403 ->
+                "El host rechazó la operación: este dispositivo necesita scope operator"
+            e is ApiException -> e.message ?: "Error ${e.status}"
+            else -> e.message ?: "Error de red"
+        }
+    }
+
     /* --------------------------------- pairing ------------------------------ */
 
     fun acceptPayload(raw: String) {
@@ -364,6 +586,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     endpoints = payload.endpoints,
                     token = result.token,
                     deviceId = result.deviceId,
+                    scope = result.scope.ifBlank { payload.scope },
                     pairedAt = System.currentTimeMillis(),
                 )
                 pendingSession = created
@@ -384,10 +607,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         autoEnter = false
         onboardStep = OnboardStep.Intro
         if (next != null) {
-            store.save(next)
+            if (!store.save(next)) {
+                toast = "No pude guardar el token en el Keystore; al reiniciar tendrás que emparejar"
+            }
             session = next
+            tokenStorage = store.tokenStorage()
         }
         if (session != null) boot()
+        if (session != null && watching) Watchdog.start(getApplication())
+    }
+
+    fun setWatchdog(enabled: Boolean) {
+        val app = getApplication<Application>()
+        if (enabled && session == null) return
+        watching = enabled
+        Watchdog.setEnabled(app, enabled)
+        toast = if (enabled) {
+            "Vigilando ${session?.name ?: "el host"}: te aviso si deja de responder"
+        } else {
+            "Vigilancia desactivada"
+        }
     }
 
     fun forget(reason: String? = null) {
@@ -396,7 +635,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         stream = null
         stopPolling()
         stopProcPolling()
+        Watchdog.stop(getApplication(), disable = true)
+        watching = false
         store.clear()
+        tokenStorage = store.tokenStorage()
         session = null
         api = null
         host = null

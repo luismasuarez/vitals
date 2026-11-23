@@ -59,6 +59,7 @@ pub struct CapRequest {
     pub device_name: String,
     pub cap: String,
     pub params: String,
+    pub code: Option<String>,
     pub created_at: i64,
     pub expires_at: i64,
 }
@@ -134,6 +135,7 @@ CREATE TABLE IF NOT EXISTS capability_requests (
     device_id  TEXT NOT NULL,
     cap        TEXT NOT NULL,
     params     TEXT NOT NULL,
+    code       TEXT,
     code_hash  TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -233,6 +235,19 @@ type RuleSignature = (
     Option<f64>,
 );
 
+fn map_cap_request(row: &rusqlite::Row<'_>) -> rusqlite::Result<CapRequest> {
+    Ok(CapRequest {
+        id: row.get(0)?,
+        device_id: row.get(1)?,
+        device_name: row.get(2)?,
+        cap: row.get(3)?,
+        params: row.get(4)?,
+        code: row.get(5)?,
+        created_at: row.get(6)?,
+        expires_at: row.get(7)?,
+    })
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
 }
@@ -254,6 +269,7 @@ impl Store {
             "scope",
             "TEXT NOT NULL DEFAULT 'reader'",
         )?;
+        ensure_column(&conn, "capability_requests", "code", "TEXT")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -582,6 +598,7 @@ impl Store {
         device_id: &str,
         cap: &str,
         params_json: &str,
+        code: &str,
         code_hash: &str,
         ttl_secs: u64,
     ) -> Result<i64> {
@@ -594,12 +611,13 @@ impl Store {
         )?;
         conn.execute(
             "INSERT INTO capability_requests
-                (device_id, cap, params, code_hash, created_at, expires_at, state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending')",
+                (device_id, cap, params, code, code_hash, created_at, expires_at, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending')",
             params![
                 device_id,
                 cap,
                 params_json,
+                code,
                 code_hash,
                 now,
                 now + ttl_secs as i64
@@ -609,45 +627,54 @@ impl Store {
     }
 
     pub fn pending_cap_requests(&self) -> Vec<CapRequest> {
-        self.cap_requests(
-            "SELECT r.id, r.device_id, COALESCE(d.name, ''), r.cap, r.params, r.created_at, r.expires_at
+        self.user_cap_requests(None)
+    }
+
+    pub fn pending_cap_requests_for(&self, device_id: &str) -> Vec<CapRequest> {
+        self.user_cap_requests(Some(device_id))
+    }
+
+    fn user_cap_requests(&self, device_id: Option<&str>) -> Vec<CapRequest> {
+        let conn = self.lock();
+        let sql = if device_id.is_some() {
+            "SELECT r.id, r.device_id, COALESCE(d.name, ''), r.cap, r.params, r.code,
+                    r.created_at, r.expires_at
+             FROM capability_requests r LEFT JOIN devices d ON d.id = r.device_id
+             WHERE r.state = 'pending' AND r.expires_at >= ?1 AND r.device_id = ?2
+             ORDER BY r.created_at"
+        } else {
+            "SELECT r.id, r.device_id, COALESCE(d.name, ''), r.cap, r.params, r.code,
+                    r.created_at, r.expires_at
              FROM capability_requests r LEFT JOIN devices d ON d.id = r.device_id
              WHERE r.state = 'pending' AND r.expires_at >= ?1
-             ORDER BY r.created_at",
-            (now_ts(),),
-        )
-    }
-
-    pub fn cap_request_by_code(&self, code_hash: &str) -> Option<CapRequest> {
-        self.cap_requests(
-            "SELECT r.id, r.device_id, COALESCE(d.name, ''), r.cap, r.params, r.created_at, r.expires_at
-             FROM capability_requests r LEFT JOIN devices d ON d.id = r.device_id
-             WHERE r.state = 'pending' AND r.expires_at >= ?1 AND r.code_hash = ?2",
-            params![now_ts(), code_hash],
-        )
-        .into_iter()
-        .next()
-    }
-
-    fn cap_requests(&self, sql: &str, args: impl rusqlite::Params) -> Vec<CapRequest> {
-        let conn = self.lock();
+             ORDER BY r.created_at"
+        };
         let Ok(mut stmt) = conn.prepare(sql) else {
             return Vec::new();
         };
-        let Ok(rows) = stmt.query_map(args, |r| {
-            Ok(CapRequest {
-                id: r.get(0)?,
-                device_id: r.get(1)?,
-                device_name: r.get(2)?,
-                cap: r.get(3)?,
-                params: r.get(4)?,
-                created_at: r.get(5)?,
-                expires_at: r.get(6)?,
-            })
-        }) else {
+        let mapped = match device_id {
+            Some(device) => stmt.query_map(params![now_ts(), device], map_cap_request),
+            None => stmt.query_map(params![now_ts()], map_cap_request),
+        };
+        let Ok(rows) = mapped else {
             return Vec::new();
         };
         rows.flatten().collect()
+    }
+
+    pub fn cap_request_by_code(&self, code_hash: &str) -> Option<CapRequest> {
+        let conn = self.lock();
+        conn.query_row(
+            "SELECT r.id, r.device_id, COALESCE(d.name, ''), r.cap, r.params, r.code,
+                    r.created_at, r.expires_at
+             FROM capability_requests r LEFT JOIN devices d ON d.id = r.device_id
+             WHERE r.state = 'pending' AND r.expires_at >= ?1 AND r.code_hash = ?2",
+            params![now_ts(), code_hash],
+            map_cap_request,
+        )
+        .optional()
+        .ok()
+        .flatten()
     }
 
     /// Marking is separate from writing the manifest: the CLI writes the grant
@@ -1105,10 +1132,10 @@ mod tests {
         s.insert_device("b", "phone-b", "hash-b", Scope::Operator)
             .unwrap();
         let id = s
-            .insert_cap_request("a", "exec.unit_restart", "{}", "code-a", 600)
+            .insert_cap_request("a", "exec.unit_restart", "{}", "AAAAAA", "code-a", 600)
             .unwrap();
         let second = s
-            .insert_cap_request("a", "exec.unit_restart", "{}", "code-b", 600)
+            .insert_cap_request("a", "exec.unit_restart", "{}", "BBBBBB", "code-b", 600)
             .unwrap();
         // The previous pending request for the same device and cap is gone.
         let pending = s.pending_cap_requests();

@@ -54,7 +54,7 @@ import kotlin.math.max
 
 /* --------------------------------- navigation ------------------------------ */
 
-enum class Screen { Home, Cpu, Net, Procs }
+enum class Screen { Home, Cpu, Net, Procs, Rules, Caps }
 
 /* --------------------------------- formaters ------------------------------- */
 

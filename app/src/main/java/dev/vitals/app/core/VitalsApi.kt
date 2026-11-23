@@ -19,6 +19,7 @@ import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
@@ -108,9 +109,38 @@ class VitalsApi(val session: Session) {
 
     suspend fun metrics(): Sample = get("/api/v1/metrics") { Wire.sample(it) }
 
-    fun openStream(listener: EventSourceListener): EventSource {
+    suspend fun alerts(): AlertReport = get("/api/v1/alerts") { Wire.alerts(it) }
+
+    suspend fun caps(): CapsReport = get("/api/v1/caps") { Wire.caps(it) }
+
+    suspend fun diagnostics(): DiagnosticsReport = get("/api/v1/diagnostics") { Wire.diagnostics(it) }
+
+    suspend fun suggestions(): List<Suggestion> =
+        get("/api/v1/suggest") { Wire.suggestions(it) }
+
+    /** One mutable endpoint, one JSON envelope. */
+    suspend fun command(op: String, args: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        val envelope = JSONObject()
+            .put("v", 1)
+            .put("id", UUID.randomUUID().toString())
+            .put("op", op)
+            .put("args", args)
+        val body = envelope.toString()
+            .toRequestBody("application/json".toMediaType())
+        JSONObject(execute("POST", "/api/v1/command", body))
+    }
+
+    fun openStream(listener: EventSourceListener): EventSource =
+        openStreamAt(index, listener)
+
+    /**
+     * Opens the stream against a specific endpoint. The watchdog rotates this
+     * index itself so a failure on LAN immediately falls through to Tailscale.
+     */
+    fun openStreamAt(at: Int, listener: EventSourceListener): EventSource {
+        val endpoint = session.endpoints[at.coerceIn(0, session.endpoints.lastIndex)]
         val request = Request.Builder()
-            .url(activeEndpoint.trimEnd('/') + "/api/v1/stream")
+            .url(endpoint.trimEnd('/') + "/api/v1/stream")
             .header("Authorization", "Bearer ${session.token}")
             .build()
         return EventSources.createFactory(sseClient).newEventSource(request, listener)

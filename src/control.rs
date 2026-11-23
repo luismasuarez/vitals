@@ -210,6 +210,7 @@ fn request_json(request: &CapRequest) -> Value {
         "cap": request.cap,
         "risk": caps::risk_of(&request.cap).map(|r| r.as_str()).unwrap_or("unknown"),
         "params": params,
+        "code": request.code,
         "created_at": request.created_at,
         "expires_at": request.expires_at,
     })

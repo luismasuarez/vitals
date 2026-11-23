@@ -19,6 +19,9 @@ class MainActivity : ComponentActivity() {
         // Testing hook: `adb shell am start -n dev.vitals.app/.MainActivity \
         //   -e pair "vitals1:..."` pairs without the camera.
         intent?.getStringExtra("pair")?.let { vm.autoPair(it) }
+        // Testing hook: `-e watch 1` enables the foreground watchdog (and `0`
+        // disables it) without tapping the settings sheet.
+        intent?.getStringExtra("watch")?.let { vm.setWatchdog(it != "0" && it != "false") }
         setContent {
             VitalsTheme {
                 VitalsApp(vm)

@@ -190,6 +190,16 @@ REQ_A_CODE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["re
 [[ ${#REQ_A_CODE} -eq 6 ]] || fail "approval code is not 6 chars"
 pass "caps.request returns a pending request and a 6-character code"
 
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/caps" > "$STATE/caps-pending.json" || fail "caps pending"
+python3 - "$STATE/caps-pending.json" "$REQ_A_CODE" <<'PY' || fail "caps does not show the pending request"
+import json, sys
+data = json.load(open(sys.argv[1]))
+exec_cap = next(c for c in data["capabilities"] if c["id"] == "exec.unit_restart")
+assert exec_cap["state"] == "pending", exec_cap
+assert exec_cap["request"]["code"] == sys.argv[2], exec_cap
+PY
+pass "pending state and its code are visible to the app"
+
 curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" -H 'content-type: application/json' \
   -d "$REQ_A" "$BASE/api/v1/command" > "$STATE/req-a-replay.json" || fail "caps.request replay"
 python3 - "$STATE/req-a.json" "$STATE/req-a-replay.json" <<'PY' || fail "idempotent replay changed the result"
@@ -204,6 +214,16 @@ pass "command id is idempotent for 24 h"
 "$BIN" --state-dir "$STATE" caps approve 1 --yes >/dev/null || fail "caps approve by list"
 grep -q "exec.unit_restart" "$STATE/capabilities.toml" || fail "manifest not written"
 pass "grant approved by list is written to the manifest"
+
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/caps" > "$STATE/caps-granted.json" || fail "caps after approval"
+python3 - "$STATE/caps-granted.json" <<'PY' || fail "caps does not show the approved grant"
+import json, sys
+data = json.load(open(sys.argv[1]))
+exec_cap = next(c for c in data["capabilities"] if c["id"] == "exec.unit_restart")
+assert exec_cap["state"] == "granted" and exec_cap["granted_by"] == "manifest", exec_cap
+assert exec_cap["params"]["units"] == ["jellyfin.service"], exec_cap
+PY
+pass "the app sees the grant and its narrowed parameters"
 
 code=$(post_command "$OP_TOKEN" '{"v":1,"id":"x2","op":"exec.unit_restart","args":{"unit":"jellyfin.service"}}')
 [[ "$code" == "501" ]] || fail "authorized exec returned $code, expected 501 not_implemented"
@@ -244,6 +264,15 @@ code=$(post_command "$B_TOKEN" '{"v":1,"id":"x7","op":"exec.unit_restart","args"
 [[ "$code" == "501" ]] || fail "B after revoking A returned $code, expected 501"
 pass "revoking A leaves B's grant intact"
 
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/caps" > "$STATE/caps-revoked.json" || fail "caps after revoke"
+python3 - "$STATE/caps-revoked.json" <<'PY' || fail "caps still shows the revoked grant"
+import json, sys
+data = json.load(open(sys.argv[1]))
+exec_cap = next(c for c in data["capabilities"] if c["id"] == "exec.unit_restart")
+assert exec_cap["state"] == "not_granted", exec_cap
+PY
+pass "the app sees the revocation immediately"
+
 curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/audit" > "$STATE/audit.json" || fail "operator audit"
 python3 - "$STATE/audit.json" <<'PY' || fail "audit contents"
 import json, sys
@@ -255,6 +284,33 @@ assert "rejected" in outcomes and "accepted" in outcomes, outcomes
 assert "capability_not_granted" in codes and "not_implemented" in codes, codes
 PY
 pass "operator reads the full audit log, rejections included"
+
+# Diagnostics and suggestions are reads for any token.
+curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/diagnostics" > "$STATE/diagnostics.json" || fail "diagnostics"
+curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/suggest" > "$STATE/suggest.json" || fail "suggest"
+python3 - "$STATE/diagnostics.json" "$STATE/suggest.json" <<'PY' || fail "diagnostics payload"
+import json, sys
+findings = json.load(open(sys.argv[1]))["findings"]
+suggestions = json.load(open(sys.argv[2]))["suggestions"]
+assert isinstance(findings, list) and isinstance(suggestions, list)
+for finding in findings:
+    assert {"id", "severity", "title", "detail", "evidence"} <= finding.keys(), finding
+for suggestion in suggestions:
+    assert suggestion["command"] and suggestion["finding"], suggestion
+PY
+pass "reader gets structured diagnostics and exact commands"
+
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/caps" > "$STATE/caps.json" || fail "caps list"
+python3 - "$STATE/caps.json" "$OP_ID" <<'PY' || fail "caps payload"
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["device_id"] == sys.argv[2], data
+assert data["scope"] == "operator"
+by_id = {c["id"]: c for c in data["capabilities"]}
+assert by_id["read.audit"]["state"] == "granted"
+assert by_id["exec.unit_restart"]["state"] == "not_granted"
+PY
+pass "caps shows per-device grants and risks"
 
 # --- 0.2: alert rules, hysteresis, silence and persistence ----------------
 ALERTS_SET='{"v":1,"id":"alerts-a1","op":"alerts.set","args":{"rules":[{"id":"disk-root","kind":"disk","mount":"/","percent":85,"days":7},{"id":"mem","kind":"memory","percent":90},{"id":"cpu-temp","kind":"temperature","celsius":95}]}}'

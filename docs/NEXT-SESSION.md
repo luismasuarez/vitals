@@ -17,7 +17,7 @@ https://github.com/luismasuarez/vitals
 | Cosa | Valor |
 |---|---|
 | Rama / HEAD | `main` en `aefd866` (+3 commits de docs sin subir), tag `v0.1.4` |
-| Árbol de trabajo | Rebanada 1 commiteada (`4e9a394`); rebanada 2 (alertas) sin commit |
+| Árbol de trabajo | Rebanadas 1–2 commiteadas (`4e9a394`, `c5d10b3`); rebanada 3 (watchdog) sin commit |
 | Servidor local | servicio de usuario `systemctl --user vitals`, 0.1.4, activo |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` (SQLite + certificado + clave) |
@@ -114,6 +114,31 @@ negocian:
 - `cargo test`, `cargo clippy --all-targets`, `scripts/smoke.sh` y
   `./gradlew assembleDebug` en verde.
 
+## Fase de pruebas (cuando toque release, no antes)
+
+Decisión de esta sesión: **no** se instala ni se hace release durante el
+desarrollo. El dispositivo conectado (A54, Android 16 / API 37) sigue con
+`dev.vitals.app` 0.1.4 y el agente local sigue en 0.1.4. Cuando el código de
+0.2 esté completo:
+
+1. `scripts/release.sh 0.2.0` y dejar que CI publique binario + APK firmados.
+2. En el host: `vitals-update` y comprobar que las reglas de alerta y el
+   historial sobreviven (SQLite en el state dir).
+3. Instalar el APK 0.2.0 **encima** de 0.1.4 (misma clave); la sesión y el token
+   deben conservarse y Ajustes debe mostrar `Android Keystore`.
+4. Conceder `POST_NOTIFICATIONS` (UI o `adb shell pm grant dev.vitals.app
+   android.permission.POST_NOTIFICATIONS`).
+5. Vigilancia: sección «Vigilancia» de `docs/TESTING.md` (caída <45 s con
+   pantalla apagada, una sola recuperación, revive de WorkManager).
+6. Reglas y permisos: reemparejar con `vitals pair --operator` (dispositivo
+   nuevo), crear las 3 plantillas, silenciar, solicitar `exec.unit_restart`,
+   aprobar por código y revocar. Comprobar Diagnóstico en Ajustes.
+7. Medir batería 8 h (<5 %) con Battery Historian.
+8. Repasar los criterios de aceptación de `PRODUCT.md` § MVP.
+
+El hook `-e watch 1|0` permite activar/desactivar el watchdog por adb para esa
+prueba, sin depender de tocar Ajustes.
+
 ## Orden de trabajo sugerido
 
 1. ~~Esquema de `command` + scopes + `audit` (sin ops de negocio) con tests.~~
@@ -129,10 +154,10 @@ negocian:
 | # | Entrega | Estado |
 |---|---|---|
 | 1 | `command` + scopes + manifiesto + `audit` | **Hecho**, commit `4e9a394` |
-| 2 | `alerts.set` + evaluador + histéresis | **Hecho**, tests + smoke |
-| 3 | Servicio en primer plano + SSE + WorkManager | Pendiente |
-| 4 | Token al Keystore | Pendiente |
-| 5 | `diagnostics` + `suggest` + pantallas | Pendiente |
+| 2 | `alerts.set` + evaluador + histéresis | **Hecho**, commit `c5d10b3` |
+| 3 | Servicio en primer plano + SSE + WorkManager | **Código hecho**; falta validar en dispositivo físico (notificación <45 s, batería) |
+| 4 | Token al Keystore | **Código hecho**; migración y reinicio pendientes de validar en el A54 |
+| 5 | `diagnostics` + `suggest` + pantallas | **Código hecho**; validación en el A54 pendiente |
 | 6 | Release 0.2.0 | Pendiente |
 
 Implementado en la rebanada 1 (commit `4e9a394`):
@@ -169,6 +194,60 @@ Implementado en la rebanada 2 (sin commit al cerrar este turno):
 - Smoke: 3 tipos de regla, validación por `kind`, persistencia tras reiniciar,
   un único `fired` en evaluación repetida, silencio y borrado.
 
+Implementado en la rebanada 3 (sin commit al cerrar este turno):
+
+- `watchdog/WatchdogService.kt`: servicio en primer plano (`specialUse`), SSE
+  contra el endpoint activo con failover, caída a los 30 s sin eventos y una
+  notificación por transición (caída y recuperación). El aviso permanente se
+  puede parar desde su propia acción.
+- `watchdog/Watchdog.kt`: preferencia persistida, estado observable
+  (`Off/Connecting/Watching/Down`) y `PeriodicWorkRequest` cada 15 min.
+- `watchdog/WatchdogWorker.kt`: revive el servicio si el sistema lo mata;
+  reintenta con backoff si Android 12+ bloquea el arranque en segundo plano.
+- UI: interruptor en Ajustes (con permiso de notificaciones), píldora
+  `vigilando/caído` en el topbar, banner en Inicio y estado con antigüedad.
+- Canales de notificación separados (servicio silencioso, alertas high) e icono
+  monocromo; permiso `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE_SPECIAL_USE` y
+  tipo `specialUse` para evitar el límite de 6 h de `dataSync` en Android 15.
+- Logs `VitalsWatchdog` para validar los tiempos con `adb logcat`.
+- `assembleDebug` en verde. Pendiente: prueba en el A54 con pantalla apagada,
+  medición de batería y confirmación de que el fabricante no bloquea el revive.
+
+Implementado en la rebanada 4 (sin commit al cerrar este turno):
+
+- `core/TokenVault.kt`: AES-256-GCM con clave no exportable en
+  `AndroidKeyStore` (alias `vitals.token.v1`), sin autenticación de usuario para
+  que el watchdog lea el token con la pantalla apagada. IV aleatorio por
+  escritura; en preferencias sólo `token_enc = v1:<iv>:<ct>`.
+- `SessionStore`: lee el token cifrado; si encuentra el token en claro de 0.1.x,
+  lo cifra, escribe el blob y **después** borra el campo `token` del JSON con
+  `commit()`. Fallo de cifrado no rompe la sesión: se conserva el valor antiguo
+  y se reintenta al siguiente arranque.
+- `save()` devuelve `false` si no pudo cifrar y no persiste nada; la app avisa
+  en lugar de volver al texto plano.
+- Ajustes muestra `Almacenamiento: Android Keystore`; el token sigue
+  enmascarado. Hook de log `VitalsVault`/`VitalsSession` para la migración.
+- Validación diferida: instalar 0.2 encima de 0.1.4, comprobar que no pide
+  reemparejar y que el XML (build debug) no contiene el token.
+
+Implementado en la rebanada 5 (sin commit al cerrar este turno):
+
+- `src/diagnostics.rs`: hallazgos estructurados de disco, predicción, memoria,
+  temperatura, alcanzabilidad, permisos del state dir y ausencia de reglas, con
+  el comando exacto de remediación (siempre como texto).
+- `GET /api/v1/diagnostics` y `GET /api/v1/suggest` para cualquier token.
+- `GET /api/v1/caps`: estado por dispositivo (`granted`/`pending`/
+  `not_granted`), riesgo, parámetros y código de la solicitud. El código se
+  guarda ahora también en claro en SQLite (la base sigue siendo `0600`) para
+  poder mostrarlo al reabrir la pantalla.
+- App: `scope` en la sesión y en el QR; pantalla de reglas con 3 plantillas,
+  silencio e historial; pantalla de permisos con riesgo visible y diálogo de
+  solicitud; diagnóstico con comandos en Ajustes.
+- Nuevos modelos/API: alertas, caps, diagnósticos y el sobre `command`.
+- Smoke: diagnósticos para `reader`, estado de caps pendiente/concedido/revocado.
+- `cargo test` 45, smoke completo y `assembleDebug` en verde. Sin validación en
+  dispositivo: reemparejar con `--operator` es parte de la fase de pruebas.
+
 ### Decisiones de implementación de 0.2 (ya tomadas)
 
 - Manifiesto: `/etc/vitals/capabilities.toml` en sistema, `<state_dir>/capabilities.toml`
@@ -193,6 +272,7 @@ Implementado en la rebanada 2 (sin commit al cerrar este turno):
 | `src/api/` | Router, handlers, SSE |
 | `src/api/command.rs` | Sobre cerrado, autorización, idempotencia, auditoría |
 | `src/alerts.rs` | Reglas, histéresis, predicción, evaluador |
+| `src/diagnostics.rs` | Hallazgos y comandos exactos, sin ejecutar |
 | `src/caps.rs` | Catálogo, scopes, manifiesto TOML |
 | `src/auth.rs` | Tokens, scopes, códigos de pairing/aprobación, rate limit |
 | `src/control.rs` | Socket unix (pair, devices, info, caps) |
@@ -201,6 +281,8 @@ Implementado en la rebanada 2 (sin commit al cerrar este turno):
 | `src/tls.rs` | Certificado y pin |
 | `src/main.rs` | CLI, supervisor de listeners, sampler |
 | `app/src/main/java/dev/vitals/app/` | ViewModel, cliente con pinning, UI Compose |
+| `app/src/main/java/dev/vitals/app/watchdog/` | Servicio en primer plano, estado y WorkManager |
+| `app/src/main/java/dev/vitals/app/ui/Manage.kt` | Pantallas de reglas y permisos |
 | `docs/PRODUCT.md` | Estrategia, contrato de `command`, permisos, roadmap |
 | `docs/TESTING.md` | Instalación, QR, scopes y aprobación, verificación |
 | `docs/NEXT-SESSION.md` | Este archivo |
@@ -241,8 +323,7 @@ cd app && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
 
 ## Lo único que queda por precisar
 
-- Las 3 plantillas de la pantalla de reglas (disco, memoria, temperatura) y su
-  copy exacto.
-- Texto exacto del aviso de riesgo en la pantalla de permisos.
+- Texto exacto del aviso de riesgo en la pantalla de permisos (hay una versión
+  funcional; falta pulir copy).
 - Nombre y copy de la notificación permanente ("vitals vigilando · <host>" es la
   propuesta) y si se oculta cuando no hay reglas activas (propuesta: sí).

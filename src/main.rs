@@ -6,6 +6,7 @@ mod cli;
 mod collect;
 mod config;
 mod control;
+mod diagnostics;
 mod net;
 mod store;
 mod tls;
@@ -193,6 +194,7 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
         cmd_limiter: Arc::new(auth::DeviceLimiter::default()),
         procs: Arc::new(Mutex::new(ProcSampler::new())),
         caps_manifest: Arc::new(paths.caps_manifest.clone()),
+        state_dir: Arc::new(paths.state_dir.clone()),
         started: Instant::now(),
     };
 

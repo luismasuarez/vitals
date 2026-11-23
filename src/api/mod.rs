@@ -57,6 +57,8 @@ pub struct AppState {
     pub procs: Arc<Mutex<ProcSampler>>,
     /// Root-owned manifest of capability grants. The agent only reads it.
     pub caps_manifest: Arc<PathBuf>,
+    /// Used by diagnostics to check ownership and permissions.
+    pub state_dir: Arc<PathBuf>,
     pub started: Instant,
 }
 
@@ -76,6 +78,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/history", get(handlers::history))
         .route("/api/v1/processes", get(handlers::processes))
         .route("/api/v1/info", get(handlers::info))
+        .route("/api/v1/diagnostics", get(handlers::diagnostics))
+        .route("/api/v1/suggest", get(handlers::suggest))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,
@@ -95,6 +99,7 @@ pub fn router(state: AppState) -> Router {
     let operator = Router::new()
         .route("/api/v1/audit", get(handlers::audit))
         .route("/api/v1/alerts", get(handlers::alerts))
+        .route("/api/v1/caps", get(handlers::caps))
         .route("/api/v1/command", post(command::command))
         .layer(middleware::from_fn(request_timeout))
         .layer(middleware::from_fn_with_state(
@@ -148,6 +153,7 @@ mod tests {
             cmd_limiter: Arc::new(DeviceLimiter::default()),
             procs: Arc::new(Mutex::new(ProcSampler::new())),
             caps_manifest: Arc::new(PathBuf::from("/tmp/vitals-test-caps.toml")),
+            state_dir: Arc::new(PathBuf::from("/tmp")),
             started: Instant::now(),
         }
     }
@@ -194,6 +200,9 @@ mod tests {
             "/api/v1/stream",
             "/api/v1/audit",
             "/api/v1/alerts",
+            "/api/v1/caps",
+            "/api/v1/diagnostics",
+            "/api/v1/suggest",
         ] {
             assert_eq!(
                 status(&app, "POST", path, Some(&token)).await,
@@ -233,6 +242,14 @@ mod tests {
         assert_eq!(
             status(&app, "GET", "/api/v1/alerts", Some(&token)).await,
             StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(&app, "GET", "/api/v1/caps", Some(&token)).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(&app, "GET", "/api/v1/diagnostics", Some(&token)).await,
+            StatusCode::OK
         );
         assert_eq!(
             status(&app, "GET", "/api/v1/metrics", Some(&token)).await,

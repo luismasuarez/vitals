@@ -51,6 +51,7 @@ import dev.vitals.app.AppViewModel
 import dev.vitals.app.Series
 import dev.vitals.app.core.Proc
 import dev.vitals.app.core.Sample
+import dev.vitals.app.watchdog.WatchStatus
 import kotlin.math.abs
 
 /* ---------------------------------- top bar -------------------------------- */
@@ -78,6 +79,7 @@ fun TopBar(vm: AppViewModel, onSettings: () -> Unit, onEndpoints: () -> Unit) {
             Text(vm.host?.os ?: "conectando…", color = Palette.Muted, fontSize = 11.sp, maxLines = 1)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (vm.watchState.status != WatchStatus.Off) WatchPill(vm.watchState.status)
             StatusPill(vm, onEndpoints)
             Box(
                 Modifier
@@ -117,6 +119,34 @@ private fun StatusPill(vm: AppViewModel, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun WatchPill(status: WatchStatus) {
+    val label = when (status) {
+        WatchStatus.Watching -> "vigilando"
+        WatchStatus.Down -> "caído"
+        WatchStatus.Connecting -> "conectando"
+        WatchStatus.Off -> return
+    }
+    val color = when (status) {
+        WatchStatus.Watching -> Palette.Accent
+        WatchStatus.Down -> Palette.Warn
+        WatchStatus.Connecting -> Palette.Dim
+        WatchStatus.Off -> Palette.Dim
+    }
+    Row(
+        Modifier
+            .clip(CircleShape)
+            .background(if (status == WatchStatus.Down) Color(0x1AF5D76E) else Palette.Surface)
+            .border(1.dp, Palette.LineStrong, CircleShape)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Dot(color)
+        Text(label, color = color, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
 /* ----------------------------------- home ---------------------------------- */
 
 @Composable
@@ -134,6 +164,9 @@ fun HomeScreen(vm: AppViewModel) {
     ) {
         if (vm.bootError != null && sample == null) {
             Banner(vm.bootError ?: "")
+        }
+        if (vm.watchState.status == WatchStatus.Down) {
+            Banner("El host no responde. Te envié una notificación local.")
         }
 
         VitalsCard(padding = 18.dp) {

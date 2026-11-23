@@ -166,6 +166,14 @@ mockup hablando la API real:
   reconexión con backoff.
 - **Emparejamiento**: cámara con CameraX + ML Kit, con dos alternativas para
   cuando no hay cámara o permiso: pegar el payload o `-e pair "vitals1:…"`.
+- **Vigilancia**: servicio en primer plano con SSE, notificación permanente y
+  aviso de host caído en unos 30 s; WorkManager lo revive cada 15 min. Se
+  activa en Ajustes y el estado se ve en el topbar.
+- **Reglas y permisos**: pantalla de reglas con 3 plantillas, silencio 1/8/24 h e
+  historial de 30 días; pantalla de permisos con riesgo, estado por dispositivo
+  y el código de la solicitud. Requieren token `operator`.
+- **Diagnóstico**: hallazgos del host y el comando exacto que los arreglaría,
+  visibles en Ajustes y nunca ejecutados por la app.
 
 ```bash
 cd app && ./gradlew assembleDebug
@@ -204,7 +212,8 @@ socket, intercambio de código, métricas, histórico, procesos, SSE, reutilizac
 de código, revocación, scopes `reader`/`operator`, esquema cerrado de `command`,
 límite de 4 KB, idempotencia, concesión y revocación de capabilities en dos
 dispositivos (por lista y por código), auditoría visible sólo para `operator`,
-reglas de alerta con histéresis, silencio, borrado y persistencia tras reiniciar.
+reglas de alerta con histéresis, silencio, borrado y persistencia tras reiniciar,
+estado de capabilities por dispositivo y diagnósticos con comandos sugeridos.
 La app se probó en un Galaxy A54 contra el agente real.
 
 ## Limitaciones conocidas
@@ -212,10 +221,12 @@ La app se probó en un Galaxy A54 contra el agente real.
 - IPv4 por defecto. `bind_ipv6 = true` en la configuración añade IPv6.
 - Un solo host por sesión. Varios hosts implican varias sesiones, no
   implementado todavía.
-- El token de Android está en SharedPreferences; en producción corresponde al
-  Keystore.
-- El agente evalúa y guarda alertas, pero todavía no las envía: el push y la
-  notificación local llegan con el watchdog de la app.
+- El token va cifrado al Android Keystore con migración automática; la app
+  0.1.4 instalada aún lo guarda en claro hasta que se instale 0.2.
+- El agente evalúa y guarda alertas; el push por ntfy llega en 0.2.1.
+- La vigilancia de host caído ya está en la app, pero la medición de batería
+  (<5 % en 8 h) y la prueba con pantalla apagada quedan pendientes en un
+  dispositivo físico.
 - `exec.*` está reservado en 0.2: se autoriza por dispositivo pero no se ejecuta.
 - Sin compresión ni paginación: los payloads son pequeños a propósito.
 - `IPAddressDeny=any` en la unit impide egreso y también `bind()` a direcciones

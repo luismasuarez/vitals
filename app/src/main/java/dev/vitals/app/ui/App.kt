@@ -37,6 +37,8 @@ fun VitalsApp(vm: AppViewModel) {
                         Screen.Cpu -> CpuScreen(vm)
                         Screen.Net -> NetScreen(vm)
                         Screen.Procs -> ProcsScreen(vm)
+                        Screen.Rules -> RulesScreen(vm)
+                        Screen.Caps -> CapsScreen(vm)
                     }
                 }
                 TabBar(

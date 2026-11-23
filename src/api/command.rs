@@ -441,6 +441,7 @@ fn request_capability(store: &Store, device: &AuthDevice, args: &Value) -> Resul
             &device.id,
             &args.cap,
             &params_json,
+            &code,
             &sha256_hex(&normalize_code(&code)),
             CAP_REQUEST_TTL_SECS as u64,
         )

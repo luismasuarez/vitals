@@ -84,10 +84,98 @@ data class PairingPayload(
     val endpoints: List<String>,
     val pin: String,
     val code: String,
+    val scope: String,
     val expiresAt: Long,
 )
 
-data class PairResult(val token: String, val deviceId: String)
+data class PairResult(val token: String, val deviceId: String, val scope: String)
+
+/* ------------------------------- alerts/caps ------------------------------ */
+
+data class AlertRule(
+    val id: String,
+    val kind: String,
+    val mount: String?,
+    val percent: Double?,
+    val days: Double?,
+    val celsius: Double?,
+    val silenceUntil: Long,
+    val firing: Boolean,
+    val since: Long?,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("kind", kind)
+        mount?.let { put("mount", it) }
+        percent?.let { put("percent", it) }
+        days?.let { put("days", it) }
+        celsius?.let { put("celsius", it) }
+    }
+
+    fun condition(): String = when (kind) {
+        "disk" -> listOfNotNull(
+            percent?.let { ">${fmt(it)}%" },
+            days?.let { "<${fmt(it)} días" },
+        ).joinToString(" o ").ifBlank { "sin umbral" }
+        "memory" -> ">${fmt(percent ?: 0.0)}%"
+        "temperature" -> ">${fmt(celsius ?: 0.0)} °C"
+        else -> kind
+    }
+
+    private fun fmt(value: Double): String =
+        if (value == value.toLong().toDouble()) value.toLong().toString() else "%.1f".format(value)
+}
+
+data class AlertEvent(
+    val id: Long,
+    val ruleId: String,
+    val kind: String,
+    val at: Long,
+    val state: String,
+    val detail: String?,
+)
+
+data class Prediction(val mount: String, val daysLeft: Double)
+
+data class AlertReport(
+    val rules: List<AlertRule>,
+    val events: List<AlertEvent>,
+    val predictions: List<Prediction>,
+    val retentionDays: Int,
+)
+
+data class CapRequestInfo(val id: Long, val code: String?, val expiresAt: Long)
+
+data class Capability(
+    val id: String,
+    val risk: String,
+    val approvable: Boolean,
+    val state: String,
+    val grantedBy: String?,
+    val params: JSONObject?,
+    val request: CapRequestInfo?,
+)
+
+data class CapsReport(
+    val deviceId: String,
+    val scope: String,
+    val capabilities: List<Capability>,
+)
+
+data class Finding(
+    val id: String,
+    val severity: String,
+    val title: String,
+    val detail: String,
+    val suggestion: String?,
+)
+
+data class Suggestion(val id: String, val finding: String, val risk: String, val command: String, val explanation: String)
+
+data class DiagnosticsReport(
+    val findings: List<Finding>,
+    val suggestions: List<Suggestion>,
+)
 
 /* --------------------------------- parsing -------------------------------- */
 
@@ -191,11 +279,117 @@ object Wire {
 
     fun pairResult(text: String): PairResult {
         val o = JSONObject(text)
-        return PairResult(token = o.getString("token"), deviceId = o.getString("device_id"))
+        return PairResult(
+            token = o.getString("token"),
+            deviceId = o.getString("device_id"),
+            scope = o.optString("scope").ifBlank { "reader" },
+        )
     }
 
-    fun errorMessage(text: String): String? =
-        runCatching { JSONObject(text).optString("error").ifBlank { null } }.getOrNull()
+    fun alerts(text: String): AlertReport {
+        val o = JSONObject(text)
+        return AlertReport(
+            rules = o.optJSONArray("rules").objects { r ->
+                AlertRule(
+                    id = r.getString("id"),
+                    kind = r.optString("kind"),
+                    mount = r.optString("mount").ifBlank { null },
+                    percent = r.doubleOrNull("percent"),
+                    days = r.doubleOrNull("days"),
+                    celsius = r.doubleOrNull("celsius"),
+                    silenceUntil = r.optLong("silence_until"),
+                    firing = r.optBoolean("firing"),
+                    since = r.longOrNull("since"),
+                )
+            },
+            events = o.optJSONArray("events").objects { e ->
+                AlertEvent(
+                    id = e.optLong("id"),
+                    ruleId = e.optString("rule_id"),
+                    kind = e.optString("kind"),
+                    at = e.optLong("at"),
+                    state = e.optString("state"),
+                    detail = e.optString("detail").ifBlank { null },
+                )
+            },
+            predictions = o.optJSONArray("predictions").objects { p ->
+                Prediction(p.optString("mount"), p.optDouble("days_left"))
+            },
+            retentionDays = o.optInt("retention_days", 30),
+        )
+    }
+
+    fun caps(text: String): CapsReport {
+        val o = JSONObject(text)
+        return CapsReport(
+            deviceId = o.optString("device_id"),
+            scope = o.optString("scope"),
+            capabilities = o.optJSONArray("capabilities").objects { c ->
+                val request = c.optJSONObject("request")?.let {
+                    CapRequestInfo(
+                        id = it.optLong("id"),
+                        code = it.optString("code").ifBlank { null },
+                        expiresAt = it.optLong("expires_at"),
+                    )
+                }
+                Capability(
+                    id = c.optString("id"),
+                    risk = c.optString("risk"),
+                    approvable = c.optBoolean("approvable"),
+                    state = c.optString("state"),
+                    grantedBy = c.optString("granted_by").ifBlank { null },
+                    params = c.optJSONObject("params"),
+                    request = request,
+                )
+            },
+        )
+    }
+
+    fun diagnostics(text: String): DiagnosticsReport {
+        val o = JSONObject(text)
+        return DiagnosticsReport(
+            findings = o.optJSONArray("findings").objects { f ->
+                Finding(
+                    id = f.optString("id"),
+                    severity = f.optString("severity"),
+                    title = f.optString("title"),
+                    detail = f.optString("detail"),
+                    suggestion = f.optString("suggestion").ifBlank { null },
+                )
+            },
+            suggestions = o.optJSONArray("suggestions").objects { s ->
+                Suggestion(
+                    id = s.optString("id"),
+                    finding = s.optString("finding"),
+                    risk = s.optString("risk"),
+                    command = s.optString("command"),
+                    explanation = s.optString("explanation"),
+                )
+            },
+        )
+    }
+
+    fun suggestions(text: String): List<Suggestion> =
+        JSONObject(text).optJSONArray("suggestions").objects { s ->
+            Suggestion(
+                id = s.optString("id"),
+                finding = s.optString("finding"),
+                risk = s.optString("risk"),
+                command = s.optString("command"),
+                explanation = s.optString("explanation"),
+            )
+        }
+
+    fun errorMessage(text: String): String? = runCatching {
+        val o = JSONObject(text)
+        when (val error = o.opt("error")) {
+            is String -> error.ifBlank { null }
+            is JSONObject -> error.optString("detail")
+                .ifBlank { error.optString("code") }
+                .ifBlank { null }
+            else -> null
+        }
+    }.getOrNull()
 
     /**
      * Accepts `vitals1:<base64url>` or the bare base64url body, with or
@@ -221,6 +415,7 @@ object Wire {
             endpoints = endpoints,
             pin = pin,
             code = code,
+            scope = o.optString("scope").ifBlank { "reader" },
             expiresAt = o.optLong("exp"),
         )
     }
@@ -243,3 +438,9 @@ private fun JSONArray?.asFloatList(): List<Float> {
     if (this == null) return emptyList()
     return (0 until length()).map { optDouble(it).toFloat() }
 }
+
+private fun JSONObject.doubleOrNull(key: String): Double? =
+    if (has(key) && !isNull(key)) getDouble(key) else null
+
+private fun JSONObject.longOrNull(key: String): Long? =
+    if (has(key) && !isNull(key)) getLong(key) else null

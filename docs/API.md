@@ -406,6 +406,82 @@ GET /api/v1/alerts?limit=50&before=312
 `state` es `fired`, `recovered`, `silenced` (0.2); `delivered` se añade con los
 canales de 0.2.1. `predictions` sólo incluye mounts con historia suficiente.
 
+## GET /api/v1/caps
+
+Scope `operator`. Estado de las capabilities **de este dispositivo**, incluido
+el código de una solicitud pendiente. Un `reader` recibe `403`.
+
+```json
+{
+  "device_id": "3f9a1c0b7d2e",
+  "scope": "operator",
+  "capabilities": [
+    { "id": "read.audit", "risk": "low", "approvable": false, "state": "granted", "granted_by": "scope", "params": null, "request": null },
+    {
+      "id": "exec.unit_restart",
+      "risk": "high",
+      "approvable": true,
+      "state": "pending",
+      "granted_by": null,
+      "params": { "units": ["jellyfin.service"] },
+      "request": { "id": 3, "code": "7KQ2M9", "expires_at": 1795472554 }
+    }
+  ]
+}
+```
+
+`state` es `granted`, `pending` o `not_granted`. `granted_by` distingue el scope
+(`scope`) de una aprobación en el host (`manifest`). Las capabilities `exec.*`
+nunca se conceden por scope.
+
+## GET /api/v1/diagnostics
+
+Cualquier token. Hallazgos estructurados; no modifica nada.
+
+```json
+{
+  "generated_at": 1795472100,
+  "findings": [
+    {
+      "id": "disk.pressure:/",
+      "severity": "critical",
+      "title": "Disco / al 96.2 %",
+      "detail": "Quedan 18.4 GiB de 480.0 GiB. Un disco lleno rompe bases de datos, logs y actualizaciones.",
+      "evidence": { "mount": "/", "used_pct": 96.2, "used_bytes": 496000000000, "total_bytes": 515000000000 },
+      "suggestion": "disk.free_space:/"
+    }
+  ]
+}
+```
+
+`severity` es `info`, `warning` o `critical`. Se evalúan: disco, predicción de
+capacidad, memoria, temperatura, alcanzabilidad (sólo loopback), permisos del
+directorio de estado y ausencia de reglas de alerta. `suggestion` enlaza con el
+siguiente endpoint.
+
+## GET /api/v1/suggest
+
+Cualquier token. El comando exacto que resolvería cada hallazgo, **sin
+ejecutarlo**.
+
+```json
+{
+  "generated_at": 1795472100,
+  "suggestions": [
+    {
+      "id": "disk.free_space:/",
+      "finding": "disk.pressure:/",
+      "risk": "low",
+      "command": "sudo journalctl --vacuum-size=200M",
+      "explanation": "Recupera espacio de logs del sistema en /. Si no basta, inspecciona con: sudo du -xhd1 / | sort -h | tail -20"
+    }
+  ]
+}
+```
+
+La app los muestra en Ajustes → Diagnóstico; ni el agente ni el móvil ejecutan
+el comando. `risk` es `low`, `medium` o `high`.
+
 ---
 
 ## Payload del QR
