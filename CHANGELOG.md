@@ -5,6 +5,20 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
+## [0.2.0](https://github.com/luismasuarez/vitals/compare/v0.1.4...v0.2.0) - 2026-11-23
+
+### Añadido
+
+- **api**: add scoped command endpoint with per-device capabilities
+- **alerts**: evaluate disk, memory and temperature rules with hysteresis
+- **app**: add foreground watchdog, keystore token and management screens
+
+### Documentación
+
+- product strategy and session handoff
+- foreground watchdog and self-hosted ntfy by default
+- refresh session handoff with the closed decisions
+
 ## [0.1.4](https://github.com/luismasuarez/vitals/compare/v0.1.3...v0.1.4) - 2026-11-23
 
 ### Añadido
@@ -40,7 +54,7 @@ regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
 - add end-to-end testing guide for the mobile app
 
-## [0.1.0](https://github.com/luismasuarez/vitals/releases/tag/v0.1.0) - 2026-11-24
+## [0.1.0](https://github.com/luismasuarez/vitals/compare/v0.1.4...v0.1.0) - 2026-11-24
 
 ### Añadido
 
