@@ -155,7 +155,7 @@ El manifiesto `/etc/vitals/capabilities.toml` lo escribe sólo `vitals caps` com
 
 ### Solicitud y aprobación
 
-1. App → `command {op:"caps.request", args:{cap:"exec.unit_restart", units:["jellyfin.service"]}}`. El servidor valida contra el catálogo y acota parámetros.
+1. App → `command {op:"caps.request", args:{cap:"exec.unit_restart", units:["jellyfin.service"]}}`. El servidor valida contra el catálogo y acota parámetros. Antes de enviar, la app muestra operación, parámetros, riesgo y qué habilitará exactamente; sin esa confirmación no hay solicitud.
 2. El agente devuelve un **código de 6 caracteres** (TTL 10 min) y una fila en `capability_requests`.
 3. En el host, dos vías equivalentes que escriben la misma concesión:
    - `sudo vitals caps pending` lista las solicitudes y `sudo vitals caps approve 2` aprueba la segunda (vía principal);
@@ -169,6 +169,10 @@ Un atacante con token `operator` no puede inventar permisos: `cap` sólo acepta 
 `operator` ve la auditoría de todo el host (quién pidió qué y qué se aplicó);
 un `reader` no ve nada.
 
+**Historial de alertas:** 30 días, con estado (disparada, entregada, silenciada,
+recuperada). Es lo que la app muestra en «Alertas recientes» y lo que permite
+distinguir un aviso puntual de un problema crónico.
+
 ### Cómo se hace real el privilegio
 
 Las capabilities de Linux son demasiado gruesas. Se usan, en orden de preferencia: unidades oneshot preinstaladas con `ExecStart` fijo, o una regla polkit que autoriza `manage-units` sólo para unidades de una allow-list y sólo al usuario `vitals`. El agente nunca corre como root. Habilitar `exec.*` obliga a dejar de usar `DynamicUser` y pasar a un usuario fijo `vitals`; sin permisos `exec` todo sigue como hoy.
@@ -178,7 +182,7 @@ Las capabilities de Linux son demasiado gruesas. Se usan, en orden de preferenci
 | Fase | Entrega | Incluye | **No** incluye |
 |---|---|---|---|
 | **1. Semanas 1–8** | v0.2 «Alertas y contrato» | `POST /command` con scopes `reader`/`operator`, manifiesto de permisos, auditoría visible; `alerts.set`; watchdog de host caído en la app; token en Keystore | Multi-host, `exec.*`, logs, compartir, widget, iOS |
-| **2. Semanas 9–17** | v0.3 «Flota y permisos» | Multi-host, vista global, widget, estado del portátil, `vitals setup` para VPS, pantalla de permisos con solicitud y aprobación, `write.channels` + ntfy | `exec.*`, logs, compartir, iOS, histórico agregado |
+| **2. Semanas 9–17** | v0.3 «Flota y permisos» | Multi-host, vista global, widget, estado del portátil, `vitals setup` para VPS, pantalla de permisos con solicitud y aprobación, `write.channels` + ntfy self-hosted | `exec.*`, logs, compartir, iOS, histórico agregado |
 | **3. Semanas 18–26** | v0.4 «Confianza» | Compartir por QR con alcance y caducidad; `exec.unit_restart` y `exec.*_clean` con polkit/oneshot **sólo si las alertas demuestran uso** (≥30 % de instalaciones con una regla activa a 30 días); watcher de servicios; logs acotados | `exec` por defecto, agente root, iOS, cloud, HA, Prometheus, SMS/llamada |
 
 Regla de corte: si una fase se retrasa, se recorta por la derecha (lo último de la lista), nunca se solapan fases. Cada entrega sale con changelog, `smoke.sh` ampliado y una nota de threat model si toca red.
@@ -187,14 +191,14 @@ Regla de corte: si una fase se retrasa, se recorta por la derecha (lo último de
 
 Una sola entrega: **que el móvil avise de capacidad y de caída sin cuenta ni cloud**.
 
-Alcance: `POST /api/v1/command` con esquema cerrado y scopes `reader`/`operator`; manifiesto de permisos y `GET /api/v1/audit`; `op: alerts.set` para disco (% y días restantes), memoria, temperatura y silencio; evaluador en el agente con histéresis y deduplicación; watchdog en la app (servicio en primer plano + notificación local) para host caído; `diagnostics.get` + `env.suggest` (hallazgos estructurados y el comando exacto que los arreglaría, sin ejecutarlo); migración del token a Keystore; pantalla de reglas con 3 plantillas y pantalla de permisos con estado concedido/pendiente por dispositivo. ntfy entra en v0.2.1 como `write.channels`.
+Alcance: `POST /api/v1/command` con esquema cerrado y scopes `reader`/`operator`; manifiesto de permisos y `GET /api/v1/audit`; `op: alerts.set` para disco (% y días restantes), memoria, temperatura y silencio; evaluador en el agente con histéresis y deduplicación; watchdog en la app con **servicio en primer plano** y SSE para host caído (icono permanente sólo mientras la vigilancia está activa; un job de WorkManager cada 15 min lo revive si el sistema lo mata); `diagnostics.get` + `env.suggest` (hallazgos estructurados y el comando exacto que los arreglaría, sin ejecutarlo); historial de alertas de 30 días; migración del token a Keystore; pantalla de reglas con 3 plantillas y pantalla de permisos con estado concedido/pendiente por dispositivo y el riesgo visible antes de solicitar. ntfy entra en v0.2.1 como `write.channels`, **self-hosted en loopback como canal por defecto** (ntfy.sh sólo como respaldo documentado).
 
 **Criterios de aceptación verificables**
 
 1. Crear la regla "disco >85 % o <7 días" desde la app en ≤3 toques y verla persistida tras reiniciar el agente y tras `vitals-update`.
 2. Con ntfy self-host en LAN (IP o DNS local), 20 eventos sintéticos entregan p95 <60 s **sin cambiar** la política de egress del unit (la LAN ya está permitida).
 3. Con ntfy público, el instalador genera un drop-in de egress, la app marca "internet: activada" y el threat model documenta qué sale y a dónde. (v0.2.1)
-4. Matar el agente: notificación de "host caído" en <90 s tras 3 fallos; al volver, una sola notificación de recuperación; 0 duplicados en 24 h.
+4. Matar el agente: notificación de "host caído" en <45 s (dos keepalives SSE perdidos, keepalive de 15 s); al volver, una sola notificación de recuperación; 0 duplicados en 24 h. Con el servicio en primer plano activo y pantalla apagada.
 5. Histéresis: oscilar ±2 % alrededor del umbral no genera más de 1 alerta; silencio de 1/8/24 h suprime y luego reevalúa.
 6. `POST /api/v1/command` rechaza >4 KB, `op` desconocida, campos desconocidos y valores fuera de rango; un test enumera rutas y falla si aparece cualquier método distinto de GET salvo `pair` y `command`. Un token `reader` recibe 403 en `command`; uno `operator` sin manifiesto recibe `capability_not_granted`.
 6b. Un `exec.*` aprobado al dispositivo A devuelve 403 al dispositivo B; revocar en A no afecta a B. Aprobar por lista y por código produce la misma fila de concesión.
@@ -215,7 +219,9 @@ iOS; hub o cuenta en la nube; ingesta Prometheus/OTel; agente como root; ejecuci
 | Sin cuenta no hay SaaS ni ingreso claro | Sostenibilidad | Ser explícito: OSS con coste marginal cero; explorar soporte/consultoría o build de pago, nunca datos |
 | Las alertas exigen egress y rompen "sin internet" | Credibilidad del modelo | Opt-in explícito, indicador en la app, ntfy en LAN como camino sin egress, threat model versionado |
 | Depender de que el usuario monte ntfy | Activación baja | Plantillas con ntfy.sh y topic secreto como opción fácil; documentar el matiz "sin cuenta ≠ sin terceros" |
-| Doze y fabricantes matan el watchdog | Alertas perdidas | Servicio en primer plano visible, solicitud de exclusión de batería, reintentos y estado "vigilando" comprobable |
+| Doze y fabricantes matan el watchdog | Alertas perdidas | Servicio en primer plano visible + job de WorkManager que lo revive; exclusión de batería opcional; estado "vigilando" comprobable |
+| El icono permanente molesta y lleva a desinstalar | Retención | El servicio sólo existe mientras hay reglas activas o el usuario activa "vigilar"; texto de la notificación corto y sin datos sensibles |
+| Política de Google Play si algún día se publica | Distribución | Servicio declarado como monitorización del propio dispositivo del usuario; APK por releases como canal principal |
 | El VPS sin Tailscale no es alcanzable | Onboarding roto en el caso #2 | `vitals setup` en fase 2; mientras tanto, decirlo en la primera pantalla |
 | Beszel publica app oficial | Se estrecha el hueco | Doblar en móvil y en compartir por QR, que no tienen |
 | Un solo mantenedor, Android only | Velocidad y TAM | Alcance por fases, releases pequeñas, no prometer iOS |
