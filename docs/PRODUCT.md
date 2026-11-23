@@ -118,6 +118,8 @@ Authorization: Bearer <device_id>.<secret>        (scope operator)
 
 Garantías: `op` y `args` con esquema cerrado (`deny_unknown_fields`), ≤4 KB, ≤20 reglas, 60/min por dispositivo, `id` deduplicado 24 h, todos los intentos (aceptados y rechazados) en la tabla `audit`.
 
+Notas de implementación de 0.2: el manifiesto es TOML (`version = 1`, filas `[[grant]]` con `device`, `cap`, `params`, `approved_at`, `source`), vive en `/etc/vitals/capabilities.toml` (sistema) o `<state_dir>/capabilities.toml` (usuario), es `0644` y sólo lo escribe `vitals caps`. `exec.*` se expone como operación **reservada**: se autoriza por scope + concesión y responde `501 not_implemented` sin ejecutar nada, para poder verificar el modelo de permisos antes de v0.4. `diagnostics.get` y `env.suggest` son lecturas y se sirven como `GET`, accesibles también a un `reader`.
+
 ### Scopes por dispositivo
 
 | Scope | Puede | Cómo se obtiene |

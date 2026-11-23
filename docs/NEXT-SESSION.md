@@ -16,7 +16,8 @@ https://github.com/luismasuarez/vitals
 
 | Cosa | Valor |
 |---|---|
-| Rama / HEAD | `main` en `b2d9a35`, tag `v0.1.4` |
+| Rama / HEAD | `main` en `aefd866` (+3 commits de docs sin subir), tag `v0.1.4` |
+| Árbol de trabajo | Rebanada 1 de v0.2 implementada y verificada, **sin commit** |
 | Servidor local | servicio de usuario `systemctl --user vitals`, 0.1.4, activo |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` (SQLite + certificado + clave) |
@@ -115,27 +116,70 @@ negocian:
 
 ## Orden de trabajo sugerido
 
-1. Esquema de `command` + scopes + `audit` (sin ops de negocio) con tests.
+1. ~~Esquema de `command` + scopes + `audit` (sin ops de negocio) con tests.~~
+   **Hecho en la sesión anterior** (ver abajo).
 2. `alerts.set` + evaluador + histéresis, con `smoke.sh`.
 3. Servicio en primer plano + SSE + notificación + revive de WorkManager.
 4. Keystore y migración del token.
 5. `diagnostics.get` + `env.suggest` y pantallas nuevas.
 6. Release 0.2.0 con el proceso habitual (`scripts/release.sh 0.2.0`).
 
+## Progreso de v0.2.0
+
+| # | Entrega | Estado |
+|---|---|---|
+| 1 | `command` + scopes + manifiesto + `audit` | **Hecho**, tests + smoke |
+| 2 | `alerts.set` + evaluador + histéresis | Pendiente |
+| 3 | Servicio en primer plano + SSE + WorkManager | Pendiente |
+| 4 | Token al Keystore | Pendiente |
+| 5 | `diagnostics` + `suggest` + pantallas | Pendiente |
+| 6 | Release 0.2.0 | Pendiente |
+
+Implementado en la rebanada 1 (todo en `main`, sin commit):
+
+- Scope `reader`/`operator` en `devices` y en `pairing_codes`, con migración
+  automática de bases 0.1.x. `vitals pair --operator`; el scope viaja en el QR
+  sólo como información, la autoridad es la fila del código.
+- `POST /api/v1/command` con sobre cerrado, `args` cerrados por operación,
+  ≤4 KB auditado, 60/min por dispositivo, `id` idempotente 24 h (sólo éxitos).
+- `GET /api/v1/audit` paginado por `id`, retención 90 días / 10 000 filas.
+- Catálogo cerrado en `src/caps.rs`, manifiesto TOML `version = 1` con
+  `[[grant]]`, escrito por `vitals caps` y leído por el agente en cada comando.
+- `caps.request` + `vitals caps pending|approve|list|revoke`, aprobación por
+  lista o por código de 6 caracteres, concesión por `device_id`.
+- `exec.*` reservado: autoriza (scope + grant + allow-list de unidad/máximo) y
+  devuelve `501 not_implemented`; no ejecuta nada.
+- Rechazos por scope de `command` también se auditan. `diagnostics` y `suggest`
+  quedan como `GET` (decisión de esta sesión), para un `reader` también.
+
+### Decisiones de implementación de 0.2 (ya tomadas)
+
+- Manifiesto: `/etc/vitals/capabilities.toml` en sistema, `<state_dir>/capabilities.toml`
+  en usuario, `0644` y escritura atómica. El agente nunca escribe; ausente =
+  sin concesiones, corrupto = fail closed.
+- `caps.request` no concede: sólo crea la solicitud y el código. Una nueva
+  solicitud del mismo dispositivo/capability invalida la anterior.
+- `exec.*` en 0.2 es una operación reservada que se autoriza y responde
+  `not_implemented`. Así 6b es verificable por API sin adelantar v0.4.
+- `limits` de parámetros: unidades con allow-list explícita (sin comodines),
+  máximo de bytes ≤ 10^12.
+
 ## Archivos clave
 
 | Ruta | Qué |
 |---|---|
 | `src/api/` | Router, handlers, SSE |
-| `src/auth.rs` | Tokens, códigos de pairing, rate limit |
-| `src/control.rs` | Socket unix (pair, devices, info) |
-| `src/store.rs` | SQLite, rollups, migraciones |
+| `src/api/command.rs` | Sobre cerrado, autorización, idempotencia, auditoría |
+| `src/caps.rs` | Catálogo, scopes, manifiesto TOML |
+| `src/auth.rs` | Tokens, scopes, códigos de pairing/aprobación, rate limit |
+| `src/control.rs` | Socket unix (pair, devices, info, caps) |
+| `src/store.rs` | SQLite, rollups, migraciones, audit y solicitudes |
 | `src/net.rs` | Interfaces, `plan_changes`, filtro IPv4 |
 | `src/tls.rs` | Certificado y pin |
 | `src/main.rs` | CLI, supervisor de listeners, sampler |
 | `app/src/main/java/dev/vitals/app/` | ViewModel, cliente con pinning, UI Compose |
 | `docs/PRODUCT.md` | Estrategia, contrato de `command`, permisos, roadmap |
-| `docs/TESTING.md` | Instalación, QR, verificación |
+| `docs/TESTING.md` | Instalación, QR, scopes y aprobación, verificación |
 | `docs/NEXT-SESSION.md` | Este archivo |
 | `scripts/install.sh` | Instalar/actualizar |
 | `scripts/release.sh` | Bump + changelog + tag |
@@ -174,6 +218,11 @@ cd app && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
 
 ## Lo único que queda por precisar
 
+- Esquema exacto de `alerts.set`: ¿una regla por llamada con `id` propio, o el
+  conjunto completo de reglas en cada `set`? Propuesta: lista acotada (≤20) con
+  `id` estable, y `alerts.delete` por `id`.
+- Las 3 plantillas de la pantalla de reglas (disco, memoria, temperatura) y su
+  copy exacto.
 - Texto exacto del aviso de riesgo en la pantalla de permisos.
 - Nombre y copy de la notificación permanente ("vitals vigilando · <host>" es la
   propuesta) y si se oculta cuando no hay reglas activas (propuesta: sí).

@@ -11,11 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_stream::wrappers::BroadcastStream;
 
+use super::AppState;
 use crate::auth::{new_device_token, normalize_code, sha256_hex};
 use crate::collect::{ProcRow, Sort};
 use crate::store::{now_ts, Device};
-
-use super::AppState;
 
 const MAX_DEVICES: i64 = 16;
 const MAX_DEVICE_NAME: usize = 64;
@@ -169,6 +168,8 @@ pub struct InfoResponse {
     pin: String,
     endpoints: Vec<String>,
     devices: Vec<Device>,
+    /// Where the agent reads grants from; the CLI writes the same path.
+    caps_manifest: String,
 }
 
 pub async fn info(State(st): State<AppState>) -> Json<InfoResponse> {
@@ -182,7 +183,25 @@ pub async fn info(State(st): State<AppState>) -> Json<InfoResponse> {
             .map(|list| list.clone())
             .unwrap_or_default(),
         devices: st.store.list_devices(),
+        caps_manifest: st.caps_manifest.display().to_string(),
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuditQuery {
+    pub limit: Option<usize>,
+    pub before: Option<i64>,
+}
+
+/// Operator only: the `require_operator` middleware already enforced the
+/// scope, so a reader never gets here.
+pub async fn audit(State(st): State<AppState>, Query(q): Query<AuditQuery>) -> Json<Value> {
+    let entries = st.store.query_audit(q.limit.unwrap_or(100), q.before);
+    Json(json!({
+        "entries": entries,
+        "retention_days": 90,
+        "max_rows": 10_000,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +215,7 @@ pub struct PairRequest {
 pub struct PairResponse {
     pub device_id: String,
     pub token: String,
+    pub scope: String,
 }
 
 pub async fn pair(
@@ -210,9 +230,9 @@ pub async fn pair(
     if code.len() != 8 {
         return Err(err(StatusCode::BAD_REQUEST, "malformed code"));
     }
-    if !st.store.consume_pairing_code(&sha256_hex(&code)) {
+    let Some(scope) = st.store.consume_pairing_code(&sha256_hex(&code)) else {
         return Err(err(StatusCode::UNAUTHORIZED, "invalid or expired code"));
-    }
+    };
 
     let name: String = req
         .device_name
@@ -230,7 +250,7 @@ pub async fn pair(
     let (device_id, token) = new_device_token();
     if let Err(e) = st
         .store
-        .insert_device(&device_id, &name, &sha256_hex(&token))
+        .insert_device(&device_id, &name, &sha256_hex(&token), scope)
     {
         tracing::error!(error = %e, "cannot store device");
         return Err(err(
@@ -238,8 +258,12 @@ pub async fn pair(
             "cannot store device",
         ));
     }
-    tracing::info!(device = %device_id, name = %name, "device paired");
-    Ok(Json(PairResponse { device_id, token }))
+    tracing::info!(device = %device_id, name = %name, scope = scope.as_str(), "device paired");
+    Ok(Json(PairResponse {
+        device_id,
+        token,
+        scope: scope.as_str().to_string(),
+    }))
 }
 
 #[cfg(test)]

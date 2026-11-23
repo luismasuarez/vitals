@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod caps;
 mod cli;
 mod collect;
 mod config;
@@ -54,6 +55,9 @@ enum Cmd {
         name: Option<String>,
         #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(60..=900))]
         ttl: u64,
+        /// Issue an operator token: metrics plus command and audit.
+        #[arg(long)]
+        operator: bool,
     },
     /// Manage paired devices.
     Devices {
@@ -64,6 +68,12 @@ enum Cmd {
     Tls {
         #[command(subcommand)]
         cmd: TlsCmd,
+    },
+    /// Approve or revoke capabilities. Must run as root (system install) or
+    /// as the service owner (user install).
+    Caps {
+        #[command(subcommand)]
+        cmd: CapsCmd,
     },
 }
 
@@ -76,6 +86,23 @@ enum DevicesCmd {
 #[derive(Subcommand)]
 enum TlsCmd {
     Show,
+}
+
+#[derive(Subcommand)]
+enum CapsCmd {
+    /// List approved grants in the manifest.
+    List,
+    /// List requests waiting for approval.
+    Pending,
+    /// Approve by list number or by the app's 6-character code.
+    Approve {
+        target: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove a grant from one device.
+    Revoke { device_id: String, cap: String },
 }
 
 #[tokio::main]
@@ -96,13 +123,23 @@ async fn main() -> Result<()> {
             let cfg = Config::load(&cli.config)?;
             serve(cfg, paths).await
         }
-        Cmd::Pair { name, ttl } => cli::pair(&sockets, name.as_deref(), ttl),
+        Cmd::Pair {
+            name,
+            ttl,
+            operator,
+        } => cli::pair(&sockets, name.as_deref(), ttl, operator),
         Cmd::Devices { cmd } => match cmd {
             DevicesCmd::List => cli::devices(&sockets),
             DevicesCmd::Revoke { id } => cli::revoke(&sockets, &id),
         },
         Cmd::Tls { cmd } => match cmd {
             TlsCmd::Show => cli::info(&sockets),
+        },
+        Cmd::Caps { cmd } => match cmd {
+            CapsCmd::List => cli::caps_list(&sockets),
+            CapsCmd::Pending => cli::caps_pending(&sockets),
+            CapsCmd::Approve { target, yes } => cli::caps_approve(&sockets, &target, yes),
+            CapsCmd::Revoke { device_id, cap } => cli::caps_revoke(&sockets, &device_id, &cap),
         },
     }
 }
@@ -152,7 +189,9 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
         endpoints: endpoints.clone(),
         host: Arc::new(host),
         limiter: Arc::new(auth::RateLimiter::default()),
+        cmd_limiter: Arc::new(auth::DeviceLimiter::default()),
         procs: Arc::new(Mutex::new(ProcSampler::new())),
+        caps_manifest: Arc::new(paths.caps_manifest.clone()),
         started: Instant::now(),
     };
 
@@ -248,6 +287,9 @@ fn spawn_sampler(
                 }
                 if let Err(e) = store.prune(now, cfg.retention_raw_hours, cfg.retention_1m_days) {
                     warn!(error = %e, "prune failed");
+                }
+                if let Err(e) = store.prune_audit(now, 10_000) {
+                    warn!(error = %e, "audit prune failed");
                 }
             }
         }

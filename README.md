@@ -1,17 +1,18 @@
 # vitals
 
-Agente de métricas del host, de sólo lectura, sobre HTTPS con certificado
-propio y pinning. Pensado para un cliente Android que consulta CPU, memoria,
-discos, red, temperaturas y procesos de un único host, tanto en la red local
-como a través de Tailscale.
+Agente de métricas del host sobre HTTPS con certificado propio y pinning.
+Pensado para un cliente Android que consulta CPU, memoria, discos, red,
+temperaturas y procesos de un único host, tanto en la red local como a través
+de Tailscale.
 
-Un binario, sin runtime, sin dependencias del sistema (SQLite compilado dentro),
-sin endpoints de escritura y sin acceso a internet.
+Un binario, sin runtime, sin dependencias del sistema (SQLite compilado dentro).
+La lectura es libre para cualquier token; la única escritura pasa por un
+endpoint cerrado, auditado y con permisos por dispositivo.
 
 ```
 Android ──HTTPS + token──► vitals (axum + sysinfo)
-                              ├── SQLite (histórico 10 s / 1 min)
-                              └── /run/vitals/control.sock (pairing, revocación)
+                              ├── SQLite (histórico, auditoría, concesiones)
+                              └── /run/vitals/control.sock (pairing, caps, revocación)
 ```
 
 ## Modelo de seguridad
@@ -20,17 +21,21 @@ Android ──HTTPS + token──► vitals (axum + sysinfo)
 |---|---|
 | Transporte | TLS 1.3/1.2 con certificado autofirmado generado en el primer arranque |
 | Confianza | El cliente fija el **pin** = SHA-256 del certificado (16 bytes, base64url) recibido en el QR. No hay CA ni validación de hostname |
-| Identidad | Token por dispositivo (`<device_id>.<secret>`), guardado como SHA-256 en SQLite, comparado en tiempo constante |
+| Identidad | Token por dispositivo (`<device_id>.<secret>`) con scope `reader` u `operator`, guardado como SHA-256 en SQLite y comparado en tiempo constante |
 | Pairing | Código de un solo uso, 40 bits, TTL 5 min, entregado por socket unix local. El token **no** viaja en el QR |
 | Red | Bind explícito por dirección: loopback, Tailscale y RFC1918. Nunca `0.0.0.0` |
 | Sandbox | `DynamicUser`, `ProtectSystem=strict`, sin capabilities, `IPAddressDeny=any` como red de seguridad de egreso |
-| Superficie | Sólo `GET`; la única excepción es `POST /api/v1/pair` |
+| Superficie | `GET` en todo; sólo `POST /api/v1/pair` y `POST /api/v1/command` cambian de método |
+| Mutación | `command` con esquema cerrado, ≤4 KB, 60/min por dispositivo, `id` idempotente 24 h y auditoría de todos los intentos |
+| Privilegio alto | `exec.*` no lo concede el scope: exige una concesión por dispositivo en `/etc/vitals/capabilities.toml`, escrita sólo por `vitals caps` |
 
 Consecuencias prácticas:
 
 - Un atacante en la LAN que haga ARP spoofing no puede leer el token (TLS) ni
   suplantar el servidor (pin).
 - Comprometer un nodo del tailnet no da acceso: hace falta además un token.
+- Comprometer un token `operator` no ejecuta nada: `exec.*` sigue necesitando
+  una fila del manifiesto, y en 0.2 ni siquiera se ejecuta.
 - En un VPS el puerto no existe en la interfaz pública, sólo en `tailscale0`.
 
 ## Instalación en una línea
@@ -80,7 +85,8 @@ certificado) y `/run/vitals/control.sock`.
 ## Emparejar el móvil
 
 ```bash
-sudo vitals pair --name pixel
+sudo vitals pair --name pixel              # scope reader
+sudo vitals pair --operator --name pixel   # + command y auditoría
 ```
 
 Imprime un QR y, debajo, el mismo payload en texto. El QR contiene:
@@ -89,6 +95,8 @@ Imprime un QR y, debajo, el mismo payload en texto. El QR contiene:
 {
   "v": 1,
   "name": "steampunker",
+  "dev": "pixel",
+  "scope": "reader",
   "ep": ["https://192.168.1.104:8443", "https://100.71.72.48:8443"],
   "pin": "RZPKDkL9mRhkkObOA54Hpw",
   "code": "8AYG-P5P0",
@@ -101,17 +109,24 @@ Codificado como `vitals1:<base64url>`. La app debe:
 1. Guardar `ep` como lista ordenada de endpoints (LAN primero, Tailscale después).
 2. Guardar `pin` como única autoridad de confianza.
 3. Hacer `POST /api/v1/pair` con `{"code": "..."}` sobre la conexión ya fijada.
-4. Guardar el `token` de la respuesta en el Keystore y descartar el código.
+4. Guardar el `token` y el `scope` de la respuesta en el Keystore y descartar
+   el código.
 
-El código caduca en 5 minutos y se consume en el primer uso. Si la app falla a
-mitad de camino, basta con emitir otro.
+El scope real lo decide el código emitido en el host: editarlo en el QR no
+eleva privilegios. El código caduca en 5 minutos y se consume en el primer uso.
 
 ## Operación
 
 ```bash
 sudo vitals devices list
 sudo vitals devices revoke <device_id>
-sudo vitals tls show          # pin, endpoints y número de dispositivos
+sudo vitals tls show          # pin, endpoints, manifest y número de dispositivos
+
+sudo vitals caps pending      # solicitudes de capability esperando aprobación
+sudo vitals caps approve 1    # por número de la lista
+sudo vitals caps approve 7KQ2M9
+sudo vitals caps list
+sudo vitals caps revoke <device_id> exec.unit_restart
 ```
 
 ### Rotar el certificado
@@ -169,14 +184,18 @@ tailscale serve --bg http://127.0.0.1:8080
 ## Verificación
 
 ```bash
-cargo test                  # 13 tests: red, auth, store, rangos
+cargo test                  # red, auth, scopes, command, caps, store
+cargo clippy --all-targets
 bash scripts/smoke.sh       # end-to-end contra un puerto y estado temporales
 cd app && ./gradlew assembleDebug
 ```
 
 El smoke test cubre: handshake con `--cacert`, 401 sin token, pairing por
 socket, intercambio de código, métricas, histórico, procesos, SSE, reutilización
-de código y revocación. La app se probó en un Galaxy A54 contra el agente real.
+de código, revocación, scopes `reader`/`operator`, esquema cerrado de `command`,
+límite de 4 KB, idempotencia, concesión y revocación de capabilities en dos
+dispositivos (por lista y por código), y auditoría visible sólo para `operator`.
+La app se probó en un Galaxy A54 contra el agente real.
 
 ## Limitaciones conocidas
 
@@ -185,7 +204,8 @@ de código y revocación. La app se probó en un Galaxy A54 contra el agente rea
   implementado todavía.
 - El token de Android está en SharedPreferences; en producción corresponde al
   Keystore.
-- Sin notificaciones push ni alertas: la app consulta, el servidor no avisa.
+- Sin notificaciones push ni alertas todavía: la app consulta, el servidor no avisa.
+- `exec.*` está reservado en 0.2: se autoriza por dispositivo pero no se ejecuta.
 - Sin compresión ni paginación: los payloads son pequeños a propósito.
 - `IPAddressDeny=any` en la unit impide egreso y también `bind()` a direcciones
   públicas, así que `allow_public = true` exige ampliar esa lista.

@@ -13,15 +13,24 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::api::AppState;
+use crate::caps::Scope;
 
 /// Crockford base32: no I, L, O, U, so an 8-character code cannot be misread.
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 pub const GENERAL_LIMIT_PER_MIN: u32 = 240;
 pub const PAIR_LIMIT_PER_MIN: u32 = 5;
+pub const COMMAND_LIMIT_PER_MIN: u32 = 60;
 
 const BUCKET_GENERAL: u8 = 0;
 const BUCKET_PAIR: u8 = 1;
+
+/// The authenticated caller, available to handlers after `require_token`.
+#[derive(Debug, Clone)]
+pub struct AuthDevice {
+    pub id: String,
+    pub scope: Scope,
+}
 
 pub fn random_bytes(n: usize) -> Vec<u8> {
     let mut buf = vec![0u8; n];
@@ -67,6 +76,16 @@ pub fn pairing_code() -> String {
     format!("{}-{}", &out[..4], &out[4..])
 }
 
+/// 30 bits rendered as six characters: typed on the host to approve a
+/// capability request from another machine. Same alphabet as the pairing code,
+/// without the dash.
+pub fn approval_code() -> String {
+    random_bytes(6)
+        .into_iter()
+        .map(|b| CROCKFORD[(b & 0x1f) as usize] as char)
+        .collect()
+}
+
 /// Accepts "abcd-efgh", "ABCDEFGH" and the classic OCR confusions.
 pub fn normalize_code(input: &str) -> String {
     input
@@ -106,6 +125,36 @@ impl RateLimiter {
             map.retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(120));
         }
         let entry = map.entry((bucket, ip)).or_insert((0, now));
+        if now.duration_since(entry.1) >= Duration::from_secs(60) {
+            *entry = (0, now);
+        }
+        entry.0 += 1;
+        entry.0 <= max
+    }
+}
+
+/// Per-device budget for `POST /api/v1/command`. IPs are useless here: several
+/// devices can share a NAT address, and one device must not starve another.
+pub struct DeviceLimiter {
+    buckets: Mutex<HashMap<String, (u32, Instant)>>,
+}
+
+impl Default for DeviceLimiter {
+    fn default() -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl DeviceLimiter {
+    pub fn allow(&self, device_id: &str, max: u32) -> bool {
+        let now = Instant::now();
+        let mut map = self.buckets.lock().expect("device limiter poisoned");
+        if map.len() > 1024 {
+            map.retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(120));
+        }
+        let entry = map.entry(device_id.to_string()).or_insert((0, now));
         if now.duration_since(entry.1) >= Duration::from_secs(60) {
             *entry = (0, now);
         }
@@ -156,7 +205,38 @@ pub async fn require_token(State(st): State<AppState>, mut req: Request, next: N
     }
 
     st.store.touch_device(&device.id);
-    req.extensions_mut().insert(device.id);
+    let scope = Scope::parse(&device.scope).unwrap_or(Scope::Reader);
+    req.extensions_mut().insert(AuthDevice {
+        id: device.id,
+        scope,
+    });
+    next.run(req).await
+}
+
+/// Applied after `require_token` to the two operator-only routes. A `reader`
+/// that tries `command` is still an attempt, so it gets an audit row.
+pub async fn require_operator(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let Some(device) = req.extensions().get::<AuthDevice>().cloned() else {
+        return unauthorized();
+    };
+    if device.scope != Scope::Operator {
+        if req.uri().path() == "/api/v1/command" {
+            let _ = st.store.insert_audit(
+                crate::store::now_ts(),
+                &device.id,
+                "unknown",
+                None,
+                "rejected",
+                Some("denied"),
+                Some("operator scope required"),
+            );
+        }
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({ "error": "operator scope required" })),
+        )
+            .into_response();
+    }
     next.run(req).await
 }
 
@@ -193,6 +273,27 @@ mod tests {
         assert!(token.starts_with(&id));
         assert_eq!(token.split('.').count(), 2);
         assert_eq!(id.len(), 12);
+    }
+
+    #[test]
+    fn approval_codes_are_six_unambiguous_chars() {
+        let code = approval_code();
+        assert_eq!(code.len(), 6);
+        assert!(code.bytes().all(|b| CROCKFORD.contains(&b)
+            && b != b'I'
+            && b != b'L'
+            && b != b'O'
+            && b != b'U'));
+        assert_ne!(approval_code(), code);
+    }
+
+    #[test]
+    fn device_limiter_is_per_device() {
+        let limiter = DeviceLimiter::default();
+        assert!(limiter.allow("a", 2));
+        assert!(limiter.allow("a", 2));
+        assert!(!limiter.allow("a", 2));
+        assert!(limiter.allow("b", 2));
     }
 
     #[test]

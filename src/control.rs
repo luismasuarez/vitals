@@ -10,6 +10,8 @@ use tokio::net::{UnixListener, UnixStream};
 
 use crate::api::AppState;
 use crate::auth::{normalize_code, pairing_code, sha256_hex};
+use crate::caps::{self, Manifest, Scope};
+use crate::store::CapRequest;
 
 const DEFAULT_TTL_SECS: u64 = 300;
 const MAX_TTL_SECS: u64 = 900;
@@ -75,11 +77,20 @@ fn dispatch(st: &AppState, req: &Value) -> Value {
                 .and_then(Value::as_u64)
                 .unwrap_or(DEFAULT_TTL_SECS)
                 .clamp(60, MAX_TTL_SECS);
+            let scope = match req.get("scope").and_then(Value::as_str) {
+                None => Scope::Reader,
+                Some(value) => match Scope::parse(value) {
+                    Some(scope) => scope,
+                    None => {
+                        return json!({ "ok": false, "error": format!("unknown scope: {value}") })
+                    }
+                },
+            };
 
             let code = pairing_code();
-            if let Err(e) = st
-                .store
-                .add_pairing_code(&sha256_hex(&normalize_code(&code)), ttl)
+            if let Err(e) =
+                st.store
+                    .add_pairing_code(&sha256_hex(&normalize_code(&code)), ttl, scope)
             {
                 return json!({ "ok": false, "error": format!("cannot store pairing code: {e}") });
             }
@@ -88,6 +99,7 @@ fn dispatch(st: &AppState, req: &Value) -> Value {
                 "v": 1,
                 "name": st.host.hostname.clone(),
                 "dev": label,
+                "scope": scope.as_str(),
                 "ep": st
                     .endpoints
                     .read()
@@ -123,10 +135,84 @@ fn dispatch(st: &AppState, req: &Value) -> Value {
                 .map(|list| list.clone())
                 .unwrap_or_default(),
             "devices": st.store.count_devices(),
+            "caps_manifest": st.caps_manifest.display().to_string(),
         }),
+        Some("caps_pending") => {
+            let requests: Vec<Value> = st
+                .store
+                .pending_cap_requests()
+                .iter()
+                .map(request_json)
+                .collect();
+            json!({ "ok": true, "requests": requests })
+        }
+        Some("caps_lookup") => {
+            let Some(code) = req.get("code").and_then(Value::as_str) else {
+                return json!({ "ok": false, "error": "missing code" });
+            };
+            let code = normalize_code(code);
+            if code.len() != 6 {
+                return json!({ "ok": false, "error": "approval codes have 6 characters" });
+            }
+            match st.store.cap_request_by_code(&sha256_hex(&code)) {
+                Some(request) => json!({ "ok": true, "request": request_json(&request) }),
+                None => json!({ "ok": false, "error": "no pending request with that code" }),
+            }
+        }
+        Some("caps_mark") => {
+            let Some(id) = req.get("id").and_then(Value::as_i64) else {
+                return json!({ "ok": false, "error": "missing id" });
+            };
+            let source = req.get("source").and_then(Value::as_str).unwrap_or("list");
+            if source != "list" && source != "code" {
+                return json!({ "ok": false, "error": "source must be list or code" });
+            }
+            json!({ "ok": true, "marked": st.store.approve_cap_request(id, source) })
+        }
+        Some("caps_grants") => {
+            let manifest = Manifest::load(&st.caps_manifest).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "cannot read capability manifest");
+                Manifest::new()
+            });
+            let grants: Vec<Value> = manifest
+                .grants
+                .iter()
+                .map(|grant| {
+                    json!({
+                        "device": grant.device,
+                        "cap": grant.cap,
+                        "risk": caps::risk_of(&grant.cap).map(|r| r.as_str()).unwrap_or("unknown"),
+                        "params": grant.params.as_ref()
+                            .map(|t| caps::toml_to_json(&toml::Value::Table(t.clone())))
+                            .unwrap_or(Value::Null),
+                        "approved_at": grant.approved_at,
+                        "source": grant.source,
+                    })
+                })
+                .collect();
+            json!({
+                "ok": true,
+                "manifest": st.caps_manifest.display().to_string(),
+                "grants": grants,
+            })
+        }
         Some(other) => json!({ "ok": false, "error": format!("unknown command: {other}") }),
         None => json!({ "ok": false, "error": "missing cmd" }),
     }
+}
+
+fn request_json(request: &CapRequest) -> Value {
+    let params: Value = serde_json::from_str(&request.params).unwrap_or(Value::Null);
+    json!({
+        "id": request.id,
+        "device_id": request.device_id,
+        "device_name": request.device_name,
+        "cap": request.cap,
+        "risk": caps::risk_of(&request.cap).map(|r| r.as_str()).unwrap_or("unknown"),
+        "params": params,
+        "created_at": request.created_at,
+        "expires_at": request.expires_at,
+    })
 }
 
 /// Client side: one request, one reply, over the unix socket.

@@ -73,6 +73,8 @@ pub struct Paths {
     pub cert: PathBuf,
     pub key: PathBuf,
     pub control_sock: PathBuf,
+    /// Root-owned grants. The agent reads it; only `vitals caps` writes it.
+    pub caps_manifest: PathBuf,
 }
 
 impl Paths {
@@ -83,11 +85,22 @@ impl Paths {
         // The CLI only needs to read this path; the service creates it.
         fs::create_dir_all(&runtime_dir).ok();
 
+        let caps_manifest = std::env::var_os("VITALS_CAPABILITIES_FILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if state_dir == Path::new("/var/lib/vitals") {
+                    PathBuf::from("/etc/vitals/capabilities.toml")
+                } else {
+                    state_dir.join("capabilities.toml")
+                }
+            });
+
         Ok(Self {
             db: state_dir.join("vitals.db"),
             cert: state_dir.join("tls-cert.pem"),
             key: state_dir.join("tls-key.pem"),
             control_sock: runtime_dir.join("control.sock"),
+            caps_manifest,
             state_dir,
         })
     }

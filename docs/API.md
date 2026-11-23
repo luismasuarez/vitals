@@ -10,10 +10,22 @@ Autenticación, salvo donde se indique:
 Authorization: Bearer <device_id>.<secret>
 ```
 
+Cada dispositivo tiene un **scope** fijado al emparejarse:
+
+| Scope | Puede | Se obtiene con |
+|---|---|---|
+| `reader` (defecto) | Todos los `GET` de métricas, procesos e histórico | `vitals pair` |
+| `operator` | Lo anterior + `POST /command` + `GET /audit` | `vitals pair --operator` |
+
+Un `reader` que llame a una ruta de `operator` recibe `403` (y el intento de
+`command` queda auditado). Las capabilities de alto riesgo (`exec.*`) no las
+concede el scope: exigen una fila en el manifiesto del host.
+
 Errores: `{"error": "mensaje"}` con el status correspondiente.
-`401` token ausente o inválido · `429` rate limit (240 req/min por IP,
-5 intentos de pairing/min) · `400` parámetro inválido · `503` colector
-arrancando · `504` timeout de handler (20 s).
+`401` token ausente o inválido · `403` scope insuficiente o capability no
+concedida · `429` rate limit (240 req/min por IP, 5 intentos de pairing/min,
+60 comandos/min por dispositivo) · `400` parámetro inválido · `413` cuerpo
+demasiado grande · `503` colector arrancando · `504` timeout de handler (20 s).
 
 ---
 
@@ -35,11 +47,12 @@ caduca en 5 minutos.
 // request
 { "code": "8AYG-P5P0", "device_name": "pixel" }
 // response 200
-{ "device_id": "3f9a1c0b7d2e", "token": "3f9a1c0b7d2e.9e4c...64hex" }
+{ "device_id": "3f9a1c0b7d2e", "token": "3f9a1c0b7d2e.9e4c...64hex", "scope": "reader" }
 ```
 
-Acepta el código con o sin guion, en minúsculas, y corrige las confusiones
-OCR habituales (`O` → `0`, `I`/`L` → `1`).
+El scope lo fija el código emitido en el host (`vitals pair [--operator]`); el
+cuerpo de la petición no puede pedirlo. Acepta el código con o sin guion, en
+minúsculas, y corrige las confusiones OCR habituales (`O` → `0`, `I`/`L` → `1`).
 
 Errores: `401 invalid or expired code`, `403 device limit reached` (16),
 `400 malformed code`.
@@ -158,14 +171,145 @@ o mostrar el pin actual.
 ```json
 {
   "name": "steampunker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "pin": "RZPKDkL9mRhkkObOA54Hpw",
   "endpoints": ["https://192.168.1.104:8443", "https://100.71.72.48:8443"],
   "devices": [
-    { "id": "3f9a1c0b7d2e", "name": "pixel", "created_at": 1795471000, "last_seen_at": 1795471900 }
-  ]
+    {
+      "id": "3f9a1c0b7d2e",
+      "name": "pixel",
+      "scope": "operator",
+      "created_at": 1795471000,
+      "last_seen_at": 1795471900
+    }
+  ],
+  "caps_manifest": "/etc/vitals/capabilities.toml"
 }
 ```
+
+`caps_manifest` es la ruta exacta desde la que el agente lee las concesiones;
+`vitals caps` escribe ese mismo fichero.
+
+## POST /api/v1/command
+
+Scope `operator`. Es el **único** endpoint mutable. Todo lo demás sigue siendo
+`GET`, y un test enumera las rutas para fallar si aparece otro método.
+
+```json
+// request
+{
+  "v": 1,
+  "id": "2f6f9a52-8c17-4b6e-9d0d-2a1f4c7e9b11",
+  "op": "caps.request",
+  "args": { "cap": "exec.unit_restart", "units": ["jellyfin.service"] }
+}
+
+// 200
+{ "ok": true, "id": "2f6f9a52-...", "result": { "request_id": 3, "cap": "exec.unit_restart", "risk": "high", "code": "7KQ2M9", "expires_at": 1795472554, "params": { "units": ["jellyfin.service"] } } }
+
+// 4xx
+{ "ok": false, "id": "2f6f9a52-...", "error": { "code": "capability_not_granted", "detail": "exec.unit_restart was not approved for this device" } }
+```
+
+Garantías:
+
+- Esquema cerrado en el sobre y en cada `args` (`deny_unknown_fields`): un campo
+  desconocido, una `op` desconocida o `v != 1` devuelven `400 schema`.
+- Cuerpo ≤ 4 KB (`413 too_large`), `id` de 1..64 caracteres `[A-Za-z0-9_-]`.
+- 60 comandos/min por dispositivo, independientes de la IP.
+- `id` idempotente 24 h: un reintento con el mismo `id` devuelve el resultado
+  almacenado sin volver a ejecutar. Los rechazos no se almacenan.
+- Todos los intentos van a `audit`, incluidos los rechazos por scope, esquema o
+  capability.
+
+Códigos de error: `schema`, `capability_not_granted`, `denied`,
+`not_implemented`, `rate_limited`, `too_large`, `internal`.
+
+### Operaciones de 0.2
+
+| `op` | `args` | Resultado | Capability |
+|---|---|---|---|
+| `caps.request` | `{cap, units?}` o `{cap, max_bytes?}` | Solicitud pendiente + código de 6 caracteres (TTL 10 min) | ninguna (sólo operator) |
+| `exec.unit_restart` | `{unit}` | `501 not_implemented` tras autorizar | `exec.unit_restart` + unidad en la allow-list |
+| `exec.journal_vacuum` | `{max_bytes}` | `501 not_implemented` tras autorizar | `exec.journal_vacuum` + máximo ≤ concesión |
+| `exec.pkg_cache_clean` | `{max_bytes}` | `501 not_implemented` tras autorizar | `exec.pkg_cache_clean` + máximo ≤ concesión |
+
+`exec.*` está **reservado**: en 0.2 sólo se autoriza para poder verificar que
+la concesión es por dispositivo, y nunca se ejecuta nada. Las operaciones de
+alertas llegan en la siguiente rebanada de 0.2.
+
+`caps.request` no concede nada: crea una fila pendiente y muestra el código que
+el operador del host debe aprobar. Sólo acepta capabilities del catálogo
+marcadas como aprobables (`exec.*`). Una nueva solicitud para el mismo
+dispositivo y capability invalida la anterior.
+
+### Aprobación de capabilities
+
+El manifiesto lo escribe únicamente `vitals caps` (root en instalación de
+sistema, propietario del servicio en instalación de usuario). El agente nunca
+lo modifica.
+
+```bash
+sudo vitals caps pending              # solicitudes con riesgo y parámetros
+sudo vitals caps approve 1            # por número de la lista
+sudo vitals caps approve 7KQ2M9       # por el código que muestra la app
+sudo vitals caps list                 # concesiones vigentes
+sudo vitals caps revoke <device_id> exec.unit_restart
+```
+
+Ambas formas de aprobar escriben la misma fila de concesión; sólo cambia el
+campo `source` (`list` o `code`). La concesión es por `device_id`: aprobar en A
+no da nada a B, y revocar en A no toca a B.
+
+```toml
+# /etc/vitals/capabilities.toml
+version = 1
+
+[[grant]]
+device = "3f9a1c0b7d2e"
+cap = "exec.unit_restart"
+params = { units = ["jellyfin.service"] }
+approved_at = 1795472000
+source = "list"
+```
+
+El fichero es `0644` (sin secretos) para que el agente, que corre con
+`DynamicUser`, pueda leerlo. Un manifiesto ausente no concede nada; uno
+corrupto se ignora por completo (fail closed) y el CLI se niega a sobrescribirlo.
+
+## GET /api/v1/audit
+
+Scope `operator`; un `reader` recibe `403`. Devuelve los intentos de `command`
+del más reciente al más antiguo.
+
+```
+GET /api/v1/audit?limit=100&before=812
+```
+
+`limit` se recorta a 1..500 (por defecto 100). `before` es paginación por `id`.
+
+```json
+{
+  "entries": [
+    {
+      "id": 812,
+      "at": 1795472100,
+      "device_id": "3f9a1c0b7d2e",
+      "op": "exec.unit_restart",
+      "request_id": "2f6f9a52-...",
+      "outcome": "rejected",
+      "code": "capability_not_granted",
+      "detail": "exec.unit_restart was not approved for this device"
+    }
+  ],
+  "retention_days": 90,
+  "max_rows": 10000
+}
+```
+
+`outcome` es `accepted`, `rejected` o `replayed`. `detail` se recorta a 200
+caracteres y nunca contiene tokens. Retención: 90 días o 10 000 filas, lo que
+llegue antes.
 
 ---
 
@@ -180,6 +324,7 @@ vitals1:<base64url(sin padding) de este JSON>
   "v": 1,
   "name": "steampunker",
   "dev": "pixel",
+  "scope": "reader",
   "ep": ["https://192.168.1.104:8443", "https://100.71.72.48:8443"],
   "pin": "RZPKDkL9mRhkkObOA54Hpw",
   "code": "8AYG-P5P0",
@@ -188,10 +333,12 @@ vitals1:<base64url(sin padding) de este JSON>
 ```
 
 `name` es el hostname del agente y `dev` la etiqueta del dispositivo que se
-está emparejando (`vitals pair --name`). Por defecto `ep` sólo trae IPv4;
-`bind_ipv6 = true` añade las direcciones IPv6. `pin` = base64url de los primeros 16
-bytes de SHA-256 sobre el DER del certificado. `ep` va ordenado: LAN primero
-(menor latencia en casa), Tailscale después. `exp` es segundos UNIX.
+está emparejando (`vitals pair --name`). `scope` es informativo para la UI: la
+autoridad es la fila del código en el agente, así que editar el QR no eleva un
+`reader` a `operator`. Por defecto `ep` sólo trae IPv4; `bind_ipv6 = true`
+añade las direcciones IPv6. `pin` = base64url de los primeros 16 bytes de
+SHA-256 sobre el DER del certificado. `ep` va ordenado: LAN primero (menor
+latencia en casa), Tailscale después. `exp` es segundos UNIX.
 
 ## Verificación del certificado en Android
 

@@ -24,11 +24,14 @@ journalctl --user -u vitals -n 20
 ## 2. Emparejar con el QR
 
 ```bash
-vitals pair --name "mi-telefono"
+vitals pair --name "mi-telefono"              # scope reader
+vitals pair --operator --name "mi-telefono"   # scope operator
 ```
 
 Imprime un QR en la terminal y, debajo, la misma carga en texto (`vitals1:…`).
-El código es de un solo uso y caduca en 5 minutos.
+El código es de un solo uso y caduca en 5 minutos. Usa `--operator` si vas a
+crear reglas o leer la auditoría desde ese móvil; para sólo consultar métricas,
+`reader` es suficiente.
 
 En el móvil:
 
@@ -61,6 +64,32 @@ Fuera de casa, activa Tailscale en el móvil: el failover pasa al endpoint
 sudo vitals devices list
 sudo vitals devices revoke <device_id>
 sudo vitals tls show
+```
+
+### Capacidades por dispositivo
+
+Un token `operator` puede pedir una capability de alto riesgo desde la app, pero
+no la obtiene hasta que alguien en el host la aprueba:
+
+```bash
+sudo vitals caps pending           # qué pide cada dispositivo, con riesgo y parámetros
+sudo vitals caps approve 1         # por número de la lista
+sudo vitals caps approve 7KQ2M9    # o por el código de 6 caracteres de la app
+sudo vitals caps list              # concesiones vigentes y su manifiesto
+sudo vitals caps revoke <device_id> exec.unit_restart
+```
+
+El manifiesto vive en `/etc/vitals/capabilities.toml` (instalación de sistema) o
+en `~/.local/state/vitals/capabilities.toml` (instalación de usuario). Es `0644`
+y sólo lo escribe `vitals caps`. Aprobar en un dispositivo no concede nada a
+otro. En 0.2 `exec.*` se autoriza pero no se ejecuta: responde
+`not_implemented`.
+
+Comprobar la auditoría desde el móvil `operator` o con `curl`:
+
+```bash
+curl --cacert ~/.local/state/vitals/tls-cert.pem \
+  -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/v1/audit
 ```
 
 Rotar el certificado (obliga a re-emparejar):
