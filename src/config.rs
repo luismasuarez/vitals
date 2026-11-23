@@ -80,10 +80,10 @@ pub struct Paths {
 impl Paths {
     pub fn resolve(state_dir: Option<&Path>) -> Result<Self> {
         let (state_dir, runtime_dir) = Self::dirs(state_dir)?;
-        fs::create_dir_all(&state_dir)
+        create_private_dir(&state_dir)
             .with_context(|| format!("cannot create state dir {}", state_dir.display()))?;
         // The CLI only needs to read this path; the service creates it.
-        fs::create_dir_all(&runtime_dir).ok();
+        let _ = create_private_dir(&runtime_dir);
 
         let caps_manifest = std::env::var_os("VITALS_CAPABILITIES_FILE")
             .map(PathBuf::from)
@@ -162,5 +162,36 @@ fn xdg_state_dir() -> PathBuf {
     match std::env::var_os("HOME") {
         Some(home) => PathBuf::from(home).join(".local/state/vitals"),
         None => PathBuf::from(".vitals"),
+    }
+}
+
+/// State and runtime directories hold the token hashes, the database and the
+/// TLS key, so user installs must not inherit a 0755 umask.
+fn create_private_dir(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::create_dir_all(path)?;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_directories_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "vitals-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        create_private_dir(&dir).unwrap();
+        let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

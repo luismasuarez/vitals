@@ -177,6 +177,7 @@ RestartSec=3
 # User managers cannot drop capabilities, so the sandboxing directives from
 # the system unit stay out of this one.
 StateDirectory=vitals
+StateDirectoryMode=0700
 RuntimeDirectory=vitals
 RuntimeDirectoryMode=0700
 UMask=0077
