@@ -16,12 +16,12 @@ https://github.com/luismasuarez/vitals
 
 | Cosa | Valor |
 |---|---|
-| Rama / HEAD | `main` en `aefd866` (+3 commits de docs sin subir), tag `v0.1.4` |
-| Árbol de trabajo | Rebanadas 1–2 commiteadas (`4e9a394`, `c5d10b3`); rebanada 3 (watchdog) sin commit |
-| Servidor local | servicio de usuario `systemctl --user vitals`, 0.1.4, activo |
+| Rama / HEAD | `main` en `a2c3c03`, tag `v0.2.0` publicado |
+| Servidor local | servicio de usuario `systemctl --user vitals`, 0.2.0, activo, **0 dispositivos** |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
-| Estado del agente | `~/.local/state/vitals` (SQLite + certificado + clave) |
-| App instalada | `dev.vitals.app` 0.1.4, release firmada, `arm64-v8a`, ya emparejada |
+| Estado del agente | `~/.local/state/vitals` limpio (SQLite + certificado nuevos, `0700`) |
+| App instalada | `dev.vitals.app` 0.2.0, release firmada, datos borrados → onboarding (permiso de notificaciones sin conceder) |
+| Pin actual | `0nH9iJ_nwpz7msNw4KcnGQ` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
 | Firma APK | `~/keystores/vitals-release.jks` + `.properties` (0600); secrets en GitHub |
 | Instalación | `curl -fsSL …/main/scripts/install.sh \| bash`; actualiza `vitals-update` |
@@ -114,40 +114,56 @@ negocian:
 - `cargo test`, `cargo clippy --all-targets`, `scripts/smoke.sh` y
   `./gradlew assembleDebug` en verde.
 
-## Fase de pruebas (cuando toque release, no antes)
+## Fase de pruebas — ejecutada (parcial)
 
-Decisión de esta sesión: **no** se instala ni se hace release durante el
-desarrollo. El dispositivo conectado (A54, Android 16 / API 37) sigue con
-`dev.vitals.app` 0.1.4 y el agente local sigue en 0.1.4. Cuando el código de
-0.2 esté completo:
+La instalación limpia ya se hizo: agente 0.2.0 con estado nuevo (0 dispositivos,
+pin `0nH9iJ_nwpz7msNw4KcnGQ`) y app 0.2.0 con datos borrados en onboarding, sin
+permiso de notificaciones para probar también ese flujo. El release `v0.2.0`
+está publicado con binarios musl y APK firmado; CI en verde. El binario
+instalado salió del propio release (`vitals-update --force`).
 
-1. `scripts/release.sh 0.2.0` y dejar que CI publique binario + APK firmados.
-2. En el host: `vitals-update` y comprobar que las reglas de alerta y el
-   historial sobreviven (SQLite en el state dir).
-3. Instalar el APK 0.2.0 **encima** de 0.1.4 (misma clave); la sesión y el token
-   deben conservarse y Ajustes debe mostrar `Android Keystore`.
-4. Conceder `POST_NOTIFICATIONS` (UI o `adb shell pm grant dev.vitals.app
-   android.permission.POST_NOTIFICATIONS`).
-5. Vigilancia: sección «Vigilancia» de `docs/TESTING.md` (caída <45 s con
-   pantalla apagada, una sola recuperación, revive de WorkManager).
-6. Reglas y permisos: reemparejar con `vitals pair --operator` (dispositivo
-   nuevo), crear las 3 plantillas, silenciar, solicitar `exec.unit_restart`,
-   aprobar por código y revocar. Comprobar Diagnóstico en Ajustes.
-7. Medir batería 8 h (<5 %) con Battery Historian.
-8. Repasar los criterios de aceptación de `PRODUCT.md` § MVP.
+Probado en el A54 (Android 16 / API 37):
 
-El hook `-e watch 1|0` permite activar/desactivar el watchdog por adb para esa
-prueba, sin depender de tocar Ajustes.
+- Vigilancia con pantalla apagada: `host down after 32–33 s`, notificación
+  `"steampunker no responde"`, recuperación única y notificación
+  `"steampunker vuelve a responder"`. Servicio `specialUse` en primer plano.
+- Reglas desde la UI: plantilla de disco creada en 3 toques, visible como
+  `disk-root` disparada; persistió tras reiniciar el agente.
+- Permisos: diálogo con `riesgo alto`, solicitud de `exec.unit_restart`, código
+  de 6 caracteres, aprobación por código, estado `concedido` y revocación
+  visible como `sin conceder`. Un segundo dispositivo no heredó la concesión.
+- Diagnóstico en Ajustes: hallazgo real de `/home` al 95.9 % con
+  `sudo journalctl --vacuum-size=200M`. El aviso de permisos del state dir
+  destapó que la instalación de usuario creaba `0755`; corregido a `0700` en
+  código y en la unit antes de publicar.
+- Token: Ajustes muestra `Android Keystore` y `Scope: operator`.
 
-## Orden de trabajo sugerido
+Pendiente de probar a mano:
 
-1. ~~Esquema de `command` + scopes + `audit` (sin ops de negocio) con tests.~~
-   **Hecho en la sesión anterior** (ver abajo).
-2. `alerts.set` + evaluador + histéresis, con `smoke.sh`.
-3. Servicio en primer plano + SSE + notificación + revive de WorkManager.
-4. Keystore y migración del token.
-5. `diagnostics.get` + `env.suggest` y pantallas nuevas.
-6. Release 0.2.0 con el proceso habitual (`scripts/release.sh 0.2.0`).
+- Escanear el QR de alta desde la pantalla de onboarding (el entorno se dejó sin
+  emparejar a propósito). Comando: `vitals pair --operator --name "mi-telefono"`.
+- Flujo visual del permiso `POST_NOTIFICATIONS` (en la prueba se concedió por
+  adb).
+- Revive de WorkManager tras matar el proceso (y comportamiento del fabricante).
+- Batería 8 h (<5 %) con Battery Historian.
+- Actualización real desde 0.1.4 con `vitals-update`; ya se comprobó
+  `--check` (instalado 0.2.0 / disponible 0.2.0).
+- Migración de token 0.1.x → 0.2: no aplica en una instalación limpia; queda
+  cubierta por código y por la comprobación `run-as` de `TESTING.md`.
+
+## Orden de trabajo
+
+v0.2.0 está cerrado y publicado. Siguiente:
+
+1. **v0.2.1**: `write.channels` + ntfy self-hosted en loopback, estados
+   `delivered` en el historial y aviso de entrega.
+2. **v0.3**: multi-host, widget, estado del portátil, `vitals setup` para VPS,
+   pantalla de permisos completa (solicitud/aprobación desde el móvil).
+3. **v0.4**: compartir por QR, `exec.*` real con polkit/oneshot, watcher de
+   servicios, logs acotados.
+
+Antes de abrir v0.2.1, cerrar las pruebas manuales pendientes de arriba
+(QR desde onboarding, WorkManager, batería y actualización real desde 0.1.4).
 
 ## Progreso de v0.2.0
 
@@ -155,10 +171,10 @@ prueba, sin depender de tocar Ajustes.
 |---|---|---|
 | 1 | `command` + scopes + manifiesto + `audit` | **Hecho**, commit `4e9a394` |
 | 2 | `alerts.set` + evaluador + histéresis | **Hecho**, commit `c5d10b3` |
-| 3 | Servicio en primer plano + SSE + WorkManager | **Código hecho**; falta validar en dispositivo físico (notificación <45 s, batería) |
-| 4 | Token al Keystore | **Código hecho**; migración y reinicio pendientes de validar en el A54 |
-| 5 | `diagnostics` + `suggest` + pantallas | **Código hecho**; validación en el A54 pendiente |
-| 6 | Release 0.2.0 | Pendiente |
+| 3 | Servicio en primer plano + SSE + WorkManager | **Hecho y probado** en el A54 |
+| 4 | Token al Keystore | **Hecho**; almacenamiento verificado, migración desde 0.1.x no aplica tras instalación limpia |
+| 5 | `diagnostics` + `suggest` + pantallas | **Hecho y probado** en el A54 |
+| 6 | Release 0.2.0 | **Publicado** (`v0.2.0`), CI y artefactos correctos |
 
 Implementado en la rebanada 1 (commit `4e9a394`):
 
@@ -177,7 +193,7 @@ Implementado en la rebanada 1 (commit `4e9a394`):
 - Rechazos por scope de `command` también se auditan. `diagnostics` y `suggest`
   quedan como `GET` (decisión de esta sesión), para un `reader` también.
 
-Implementado en la rebanada 2 (sin commit al cerrar este turno):
+Implementado en la rebanada 2 (commit `c5d10b3`):
 
 - `src/alerts.rs`: validación cerrada de reglas, máquina de estados con
   histéresis (2 puntos / 2 días / 2 °C), predicción por regresión de 7 días y
@@ -194,7 +210,7 @@ Implementado en la rebanada 2 (sin commit al cerrar este turno):
 - Smoke: 3 tipos de regla, validación por `kind`, persistencia tras reiniciar,
   un único `fired` en evaluación repetida, silencio y borrado.
 
-Implementado en la rebanada 3 (sin commit al cerrar este turno):
+Implementado en la rebanada 3 (commit `ef03e50`, junto con 4–5):
 
 - `watchdog/WatchdogService.kt`: servicio en primer plano (`specialUse`), SSE
   contra el endpoint activo con failover, caída a los 30 s sin eventos y una
@@ -213,7 +229,7 @@ Implementado en la rebanada 3 (sin commit al cerrar este turno):
 - `assembleDebug` en verde. Pendiente: prueba en el A54 con pantalla apagada,
   medición de batería y confirmación de que el fabricante no bloquea el revive.
 
-Implementado en la rebanada 4 (sin commit al cerrar este turno):
+Implementado en la rebanada 4 (commit `ef03e50`):
 
 - `core/TokenVault.kt`: AES-256-GCM con clave no exportable en
   `AndroidKeyStore` (alias `vitals.token.v1`), sin autenticación de usuario para
@@ -230,7 +246,7 @@ Implementado en la rebanada 4 (sin commit al cerrar este turno):
 - Validación diferida: instalar 0.2 encima de 0.1.4, comprobar que no pide
   reemparejar y que el XML (build debug) no contiene el token.
 
-Implementado en la rebanada 5 (sin commit al cerrar este turno):
+Implementado en la rebanada 5 (commit `ef03e50`):
 
 - `src/diagnostics.rs`: hallazgos estructurados de disco, predicción, memoria,
   temperatura, alcanzabilidad, permisos del state dir y ausencia de reglas, con
