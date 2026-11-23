@@ -16,7 +16,7 @@ https://github.com/luismasuarez/vitals
 
 | Cosa | Valor |
 |---|---|
-| Rama / HEAD | `main` en `a2c3c03`, tag `v0.2.0` publicado |
+| Rama / HEAD | `main` en `fb6e803`; tag `v0.2.0` en `a2c3c03`, publicada |
 | Servidor local | servicio de usuario `systemctl --user vitals`, 0.2.0, activo, **0 dispositivos** |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` limpio (SQLite + certificado nuevos, `0700`) |
