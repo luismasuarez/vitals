@@ -1,3 +1,4 @@
+mod alerts;
 mod api;
 mod auth;
 mod caps;
@@ -263,6 +264,8 @@ fn spawn_sampler(
         let persist_every = cfg.persist_every.max(1) as u64;
         let mut ticks: u64 = 0;
         let mut last_maintenance = Instant::now();
+        let mut last_disk_record = Instant::now() - Duration::from_secs(60);
+        let mut evaluator = alerts::Evaluator::new();
 
         loop {
             ticker.tick().await;
@@ -271,6 +274,29 @@ fn spawn_sampler(
                 *slot = Some(sample.clone());
             }
             let _ = tx.send(sample.clone());
+
+            // One row per mount per minute feeds the capacity prediction.
+            if last_disk_record.elapsed() >= Duration::from_secs(60) {
+                last_disk_record = Instant::now();
+                let minute = (sample.t as i64 / 60) * 60;
+                let rows: Vec<(String, i64, i64, i64)> = sample
+                    .disks
+                    .iter()
+                    .map(|disk| {
+                        (
+                            disk.mount.clone(),
+                            minute,
+                            disk.used as i64,
+                            disk.total as i64,
+                        )
+                    })
+                    .collect();
+                if let Err(e) = store.record_disk_usage(&rows) {
+                    warn!(error = %e, "cannot record disk usage");
+                }
+            }
+
+            evaluator.tick(&store, &sample);
 
             ticks += 1;
             if ticks % persist_every == 0 {
@@ -290,6 +316,9 @@ fn spawn_sampler(
                 }
                 if let Err(e) = store.prune_audit(now, 10_000) {
                     warn!(error = %e, "audit prune failed");
+                }
+                if let Err(e) = store.prune_alerts(now) {
+                    warn!(error = %e, "alert prune failed");
                 }
             }
         }

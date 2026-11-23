@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -6,6 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
+use crate::alerts::{Kind, Rule};
 use crate::caps::Scope;
 
 pub fn now_ts() -> i64 {
@@ -59,6 +61,31 @@ pub struct CapRequest {
     pub params: String,
     pub created_at: i64,
     pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertRuleView {
+    pub id: String,
+    pub kind: String,
+    pub mount: Option<String>,
+    pub percent: Option<f64>,
+    pub days: Option<f64>,
+    pub celsius: Option<f64>,
+    pub silence_until: i64,
+    pub firing: bool,
+    pub since: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertEvent {
+    pub id: i64,
+    pub rule_id: String,
+    pub kind: String,
+    pub at: i64,
+    pub state: String,
+    pub value: Option<f64>,
+    pub threshold: Option<f64>,
+    pub detail: Option<String>,
 }
 
 const SCHEMA: &str = r#"
@@ -115,6 +142,44 @@ CREATE TABLE IF NOT EXISTS capability_requests (
     source     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id            TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL,
+    mount         TEXT,
+    percent       REAL,
+    days          REAL,
+    celsius       REAL,
+    silence_until INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_states (
+    rule_id TEXT PRIMARY KEY,
+    firing  INTEGER NOT NULL DEFAULT 0,
+    since   INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS alert_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id   TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    at        INTEGER NOT NULL,
+    state     TEXT NOT NULL,
+    value     REAL,
+    threshold REAL,
+    detail    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS alert_events_at ON alert_events(at);
+
+CREATE TABLE IF NOT EXISTS disk_usage_1m (
+    mount TEXT NOT NULL,
+    t     INTEGER NOT NULL,
+    used  INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    PRIMARY KEY (mount, t)
+);
+
 CREATE TABLE IF NOT EXISTS samples_raw (
     t        INTEGER PRIMARY KEY,
     cpu      REAL NOT NULL,
@@ -157,6 +222,16 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> Re
     }
     Ok(())
 }
+
+/// Definition fields used to decide whether an `alerts.set` changed a rule.
+/// (kind, mount, percent, days, celsius)
+type RuleSignature = (
+    String,
+    Option<String>,
+    Option<f64>,
+    Option<f64>,
+    Option<f64>,
+);
 
 pub struct Store {
     conn: Mutex<Connection>,
@@ -588,6 +663,334 @@ impl Store {
             .unwrap_or(0)
             == 1
     }
+
+    // --- alert rules and events -------------------------------------------
+
+    pub fn alert_rules_view(&self) -> Vec<AlertRuleView> {
+        let conn = self.lock();
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT r.id, r.kind, r.mount, r.percent, r.days, r.celsius,
+                    r.silence_until, COALESCE(s.firing, 0), s.since
+             FROM alert_rules r LEFT JOIN alert_states s ON s.rule_id = r.id
+             ORDER BY r.kind, r.id",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map([], |row| {
+            Ok(AlertRuleView {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                mount: row.get(2)?,
+                percent: row.get(3)?,
+                days: row.get(4)?,
+                celsius: row.get(5)?,
+                silence_until: row.get(6)?,
+                firing: row.get::<_, i64>(7)? != 0,
+                since: row.get(8)?,
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
+    pub fn list_alert_rules(&self) -> Vec<Rule> {
+        let conn = self.lock();
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT id, kind, mount, percent, days, celsius, silence_until
+             FROM alert_rules ORDER BY kind, id",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map([], |row| {
+            let kind: String = row.get(1)?;
+            Ok((
+                kind,
+                Rule {
+                    id: row.get(0)?,
+                    kind: Kind::Memory,
+                    mount: row.get(2)?,
+                    percent: row.get(3)?,
+                    days: row.get(4)?,
+                    celsius: row.get(5)?,
+                    silence_until: row.get(6)?,
+                },
+            ))
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten()
+            .filter_map(|(kind, mut rule)| {
+                rule.kind = Kind::parse(&kind)?;
+                Some(rule)
+            })
+            .collect()
+    }
+
+    pub fn firing_rule_ids(&self) -> HashSet<String> {
+        let conn = self.lock();
+        let Ok(mut stmt) = conn.prepare("SELECT rule_id FROM alert_states WHERE firing = 1") else {
+            return HashSet::new();
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get(0)) else {
+            return HashSet::new();
+        };
+        rows.flatten().collect()
+    }
+
+    /// Replaces the rule set. A rule whose definition did not change keeps its
+    /// firing state and silence window; a changed or new rule starts clean so
+    /// it can fire again. Rules missing from `rules` are deleted.
+    pub fn replace_alert_rules(&self, rules: &[Rule]) -> Result<()> {
+        let now = now_ts();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+
+        let mut existing: HashMap<String, RuleSignature> = HashMap::new();
+        {
+            let mut stmt =
+                tx.prepare("SELECT id, kind, mount, percent, days, celsius FROM alert_rules")?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                existing.insert(
+                    row.get(0)?,
+                    (
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ),
+                );
+            }
+        }
+
+        let incoming: HashSet<&str> = rules.iter().map(|rule| rule.id.as_str()).collect();
+        for rule in rules {
+            let unchanged = existing.get(&rule.id).is_some_and(|old| {
+                old.0 == rule.kind.as_str()
+                    && old.1 == rule.mount
+                    && old.2 == rule.percent
+                    && old.3 == rule.days
+                    && old.4 == rule.celsius
+            });
+            if unchanged {
+                tx.execute(
+                    "UPDATE alert_rules SET updated_at = ?1 WHERE id = ?2",
+                    params![now, rule.id],
+                )?;
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO alert_rules
+                    (id, kind, mount, percent, days, celsius, silence_until, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                    kind = excluded.kind, mount = excluded.mount,
+                    percent = excluded.percent, days = excluded.days,
+                    celsius = excluded.celsius, silence_until = 0,
+                    updated_at = excluded.updated_at",
+                params![
+                    rule.id,
+                    rule.kind.as_str(),
+                    rule.mount,
+                    rule.percent,
+                    rule.days,
+                    rule.celsius,
+                    now
+                ],
+            )?;
+            tx.execute(
+                "DELETE FROM alert_states WHERE rule_id = ?1",
+                params![rule.id],
+            )?;
+        }
+
+        for id in existing.keys() {
+            if !incoming.contains(id.as_str()) {
+                tx.execute("DELETE FROM alert_rules WHERE id = ?1", params![id])?;
+                tx.execute("DELETE FROM alert_states WHERE rule_id = ?1", params![id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_alert_rule(&self, id: &str) -> bool {
+        let mut conn = self.lock();
+        let Ok(tx) = conn.transaction() else {
+            return false;
+        };
+        let removed = tx
+            .execute("DELETE FROM alert_rules WHERE id = ?1", params![id])
+            .unwrap_or(0)
+            == 1;
+        let _ = tx.execute("DELETE FROM alert_states WHERE rule_id = ?1", params![id]);
+        let _ = tx.commit();
+        removed
+    }
+
+    pub fn set_alert_firing(&self, rule_id: &str, firing: bool, at: i64) {
+        let _ = if firing {
+            self.lock().execute(
+                "INSERT INTO alert_states (rule_id, firing, since) VALUES (?1, 1, ?2)
+                 ON CONFLICT(rule_id) DO UPDATE SET firing = 1, since = ?2",
+                params![rule_id, at],
+            )
+        } else {
+            self.lock().execute(
+                "DELETE FROM alert_states WHERE rule_id = ?1",
+                params![rule_id],
+            )
+        };
+    }
+
+    /// Resets every firing state and opens a silence window. Rules that were
+    /// firing get a `silenced` event so the history explains the gap.
+    pub fn silence_alerts(&self, until: i64, at: i64) -> Result<usize> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let mut firing: Vec<(String, String)> = Vec::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT s.rule_id, r.kind FROM alert_states s
+                 JOIN alert_rules r ON r.id = s.rule_id WHERE s.firing = 1",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                firing.push((row.get(0)?, row.get(1)?));
+            }
+        }
+        for (rule_id, kind) in &firing {
+            tx.execute(
+                "INSERT INTO alert_events (rule_id, kind, at, state, value, threshold, detail)
+                 VALUES (?1, ?2, ?3, 'silenced', NULL, NULL, 'silenced from the app')",
+                params![rule_id, kind, at],
+            )?;
+        }
+        tx.execute("DELETE FROM alert_states", [])?;
+        tx.execute("UPDATE alert_rules SET silence_until = ?1", params![until])?;
+        tx.commit()?;
+        Ok(firing.len())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_alert_event(
+        &self,
+        rule_id: &str,
+        kind: Kind,
+        at: i64,
+        state: &str,
+        value: Option<f64>,
+        threshold: Option<f64>,
+        detail: Option<&str>,
+    ) -> Result<()> {
+        self.lock().execute(
+            "INSERT INTO alert_events (rule_id, kind, at, state, value, threshold, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![rule_id, kind.as_str(), at, state, value, threshold, detail],
+        )?;
+        Ok(())
+    }
+
+    pub fn query_alert_events(&self, limit: usize, before: Option<i64>) -> Vec<AlertEvent> {
+        let limit = limit.clamp(1, 500) as i64;
+        let conn = self.lock();
+        let (sql, args): (&str, Vec<i64>) = match before {
+            Some(before) => (
+                "SELECT id, rule_id, kind, at, state, value, threshold, detail
+                 FROM alert_events WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
+                vec![before, limit],
+            ),
+            None => (
+                "SELECT id, rule_id, kind, at, state, value, threshold, detail
+                 FROM alert_events ORDER BY id DESC LIMIT ?1",
+                vec![limit],
+            ),
+        };
+        let Ok(mut stmt) = conn.prepare(sql) else {
+            return Vec::new();
+        };
+        let mapped = stmt.query_map(rusqlite::params_from_iter(args), |row| {
+            Ok(AlertEvent {
+                id: row.get(0)?,
+                rule_id: row.get(1)?,
+                kind: row.get(2)?,
+                at: row.get(3)?,
+                state: row.get(4)?,
+                value: row.get(5)?,
+                threshold: row.get(6)?,
+                detail: row.get(7)?,
+            })
+        });
+        let Ok(rows) = mapped else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
+    pub fn prune_alerts(&self, now: i64) -> Result<()> {
+        let c = self.lock();
+        c.execute(
+            "DELETE FROM alert_events WHERE at < ?1",
+            params![now - 30 * 86_400],
+        )?;
+        c.execute(
+            "DELETE FROM disk_usage_1m WHERE t < ?1",
+            params![now - 30 * 86_400],
+        )?;
+        Ok(())
+    }
+
+    // --- disk capacity history --------------------------------------------
+
+    /// `rows` is (mount, t, used, total); t is rounded to the minute.
+    pub fn record_disk_usage(&self, rows: &[(String, i64, i64, i64)]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for (mount, t, used, total) in rows {
+            tx.execute(
+                "INSERT INTO disk_usage_1m (mount, t, used, total)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(mount, t) DO UPDATE SET
+                    used = excluded.used, total = excluded.total",
+                params![mount, t, used, total],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn disk_usage_since(&self, mount: &str, since: i64) -> Vec<(i64, i64, i64)> {
+        let conn = self.lock();
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT t, used, total FROM disk_usage_1m
+             WHERE mount = ?1 AND t >= ?2 ORDER BY t",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map(params![mount, since], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
+    pub fn disk_mounts(&self) -> Vec<String> {
+        let conn = self.lock();
+        let Ok(mut stmt) = conn.prepare("SELECT DISTINCT mount FROM disk_usage_1m ORDER BY mount")
+        else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map([], |row| row.get(0)) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
 }
 
 #[cfg(test)]
@@ -747,6 +1150,76 @@ mod tests {
         // The two newest rows survive, the expired one is gone.
         assert_eq!(rows[0].at, now);
         assert_eq!(rows[1].at, now - 1);
+    }
+
+    #[test]
+    fn alert_rules_survive_reopen_and_silence_resets_state() {
+        use crate::alerts::{Kind, Rule};
+
+        let dir =
+            std::env::temp_dir().join(format!("vitals-store-{}-{}", std::process::id(), now_ts()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vitals.db");
+        let rule = Rule {
+            id: "disk-root".into(),
+            kind: Kind::Disk,
+            mount: Some("/".into()),
+            percent: Some(85.0),
+            days: Some(7.0),
+            celsius: None,
+            silence_until: 0,
+        };
+
+        {
+            let s = Store::open(&path).unwrap();
+            s.replace_alert_rules(std::slice::from_ref(&rule)).unwrap();
+        }
+
+        let s = Store::open(&path).unwrap();
+        let rules = s.list_alert_rules();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].percent, Some(85.0));
+
+        let now = now_ts();
+        s.set_alert_firing("disk-root", true, now);
+        s.silence_alerts(now + 3_600, now).unwrap();
+        assert!(s.firing_rule_ids().is_empty());
+        assert!(s.alert_rules_view()[0].silence_until > now);
+        let events = s.query_alert_events(10, None);
+        assert_eq!(events[0].state, "silenced");
+
+        // An unchanged definition keeps the firing state...
+        s.set_alert_firing("disk-root", true, now);
+        s.replace_alert_rules(std::slice::from_ref(&rule)).unwrap();
+        assert!(s.firing_rule_ids().contains("disk-root"));
+
+        // ...a changed threshold starts a fresh episode.
+        let mut changed = rule;
+        changed.percent = Some(90.0);
+        s.replace_alert_rules(&[changed]).unwrap();
+        assert!(s.firing_rule_ids().is_empty());
+
+        assert!(s.delete_alert_rule("disk-root"));
+        assert!(s.list_alert_rules().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn disk_usage_is_kept_per_mount_and_can_be_read_back() {
+        let s = Store::in_memory();
+        let base = (now_ts() / 60) * 60;
+        s.record_disk_usage(&[
+            ("/".into(), base, 100, 1000),
+            ("/".into(), base + 60, 110, 1000),
+            ("/home".into(), base, 50, 500),
+        ])
+        .unwrap();
+        let root = s.disk_usage_since("/", base);
+        assert_eq!(root.len(), 2);
+        assert_eq!(root[1].1, 110);
+        let mut mounts = s.disk_mounts();
+        mounts.sort();
+        assert_eq!(mounts, vec!["/", "/home"]);
     }
 
     #[test]

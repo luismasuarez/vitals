@@ -205,6 +205,24 @@ pub async fn audit(State(st): State<AppState>, Query(q): Query<AuditQuery>) -> J
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AlertsQuery {
+    pub limit: Option<usize>,
+    pub before: Option<i64>,
+}
+
+/// Operator only. Returns the rule set, the recent history and the current
+/// disk predictions (used by the rules screen).
+pub async fn alerts(State(st): State<AppState>, Query(q): Query<AlertsQuery>) -> Json<Value> {
+    let now = now_ts();
+    Json(json!({
+        "rules": st.store.alert_rules_view(),
+        "events": st.store.query_alert_events(q.limit.unwrap_or(50), q.before),
+        "predictions": crate::alerts::predictions(&st.store, now),
+        "retention_days": 30,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PairRequest {
     pub code: String,
     #[serde(default)]

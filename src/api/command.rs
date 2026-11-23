@@ -45,6 +45,12 @@ struct CommandRequest {
 enum Op {
     #[serde(rename = "caps.request")]
     CapsRequest,
+    #[serde(rename = "alerts.set")]
+    AlertsSet,
+    #[serde(rename = "alerts.delete")]
+    AlertsDelete,
+    #[serde(rename = "alerts.silence")]
+    AlertsSilence,
     #[serde(rename = "exec.unit_restart")]
     ExecUnitRestart,
     #[serde(rename = "exec.journal_vacuum")]
@@ -57,6 +63,9 @@ impl Op {
     fn as_str(self) -> &'static str {
         match self {
             Op::CapsRequest => "caps.request",
+            Op::AlertsSet => "alerts.set",
+            Op::AlertsDelete => "alerts.delete",
+            Op::AlertsSilence => "alerts.silence",
             Op::ExecUnitRestart => "exec.unit_restart",
             Op::ExecJournalVacuum => "exec.journal_vacuum",
             Op::ExecPkgCacheClean => "exec.pkg_cache_clean",
@@ -66,11 +75,30 @@ impl Op {
     fn required_cap(self) -> Option<&'static str> {
         match self {
             Op::CapsRequest => None,
+            Op::AlertsSet | Op::AlertsDelete | Op::AlertsSilence => Some("write.alerts"),
             Op::ExecUnitRestart => Some("exec.unit_restart"),
             Op::ExecJournalVacuum => Some("exec.journal_vacuum"),
             Op::ExecPkgCacheClean => Some("exec.pkg_cache_clean"),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlertsSetArgs {
+    rules: Vec<crate::alerts::RuleInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlertsDeleteArgs {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlertsSilenceArgs {
+    minutes: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,8 +287,88 @@ fn dispatch(
 ) -> Result<Value, CmdError> {
     match op {
         Op::CapsRequest => request_capability(store, device, args),
+        Op::AlertsSet | Op::AlertsDelete | Op::AlertsSilence => {
+            let manifest = caps::Manifest::load_or_empty(manifest_path);
+            if !caps::is_allowed(&manifest, &device.id, device.scope, "write.alerts") {
+                return Err(CmdError::capability_not_granted(
+                    "write.alerts is not available for this device",
+                ));
+            }
+            match op {
+                Op::AlertsSet => set_alerts(store, args),
+                Op::AlertsDelete => delete_alert(store, args),
+                Op::AlertsSilence => silence_alerts(store, args),
+                _ => unreachable!("alerts ops only"),
+            }
+        }
         _ => authorized_exec(manifest_path, device, op, args),
     }
+}
+
+fn set_alerts(store: &Store, args: &Value) -> Result<Value, CmdError> {
+    let args: AlertsSetArgs =
+        serde_json::from_value(args.clone()).map_err(|e| CmdError::schema(e.to_string()))?;
+    if args.rules.len() > crate::alerts::MAX_RULES {
+        return Err(CmdError::schema(format!(
+            "at most {} rules are allowed",
+            crate::alerts::MAX_RULES
+        )));
+    }
+
+    let mut ids = std::collections::HashSet::new();
+    let mut rules = Vec::with_capacity(args.rules.len());
+    for input in &args.rules {
+        if !ids.insert(input.id.clone()) {
+            return Err(CmdError::schema(format!("duplicate rule id: {}", input.id)));
+        }
+        rules.push(crate::alerts::parse_rule(input).map_err(CmdError::schema)?);
+    }
+
+    store.replace_alert_rules(&rules).map_err(|e| {
+        tracing::error!(error = %e, "cannot store alert rules");
+        CmdError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal",
+            detail: "cannot store alert rules".into(),
+        }
+    })?;
+
+    Ok(json!({ "rules": store.alert_rules_view() }))
+}
+
+fn delete_alert(store: &Store, args: &Value) -> Result<Value, CmdError> {
+    let args: AlertsDeleteArgs =
+        serde_json::from_value(args.clone()).map_err(|e| CmdError::schema(e.to_string()))?;
+    if !crate::alerts::valid_rule_id(&args.id) {
+        return Err(CmdError::schema("invalid rule id"));
+    }
+    Ok(json!({
+        "id": args.id,
+        "deleted": store.delete_alert_rule(&args.id),
+    }))
+}
+
+fn silence_alerts(store: &Store, args: &Value) -> Result<Value, CmdError> {
+    let args: AlertsSilenceArgs =
+        serde_json::from_value(args.clone()).map_err(|e| CmdError::schema(e.to_string()))?;
+    if args.minutes == 0 || args.minutes > 1_440 {
+        return Err(CmdError::schema("minutes must be in 1..=1440"));
+    }
+    let now = now_ts();
+    let until = now + args.minutes as i64 * 60;
+    let silenced = store.silence_alerts(until, now).map_err(|e| {
+        tracing::error!(error = %e, "cannot silence alerts");
+        CmdError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal",
+            detail: "cannot silence alerts".into(),
+        }
+    })?;
+    Ok(json!({
+        "silenced_until": until,
+        "silenced": silenced,
+        "rules": store.alert_rules_view(),
+    }))
 }
 
 /// `caps.request` is the only path that creates a pending approval. It does not
@@ -404,7 +512,9 @@ fn authorized_exec(
                 return Err(CmdError::denied("size is above the approved maximum"));
             }
         }
-        Op::CapsRequest => unreachable!("caps.request never reaches authorized_exec"),
+        Op::CapsRequest | Op::AlertsSet | Op::AlertsDelete | Op::AlertsSilence => {
+            unreachable!("non-exec operation reached authorized_exec")
+        }
     }
 
     Err(CmdError {
@@ -473,6 +583,18 @@ fn audit_detail(op: Op, args: &Value) -> Option<String> {
             .get("max_bytes")
             .and_then(Value::as_u64)
             .map(|max| format!("max_bytes {max}")),
+        Op::AlertsSet => args
+            .get("rules")
+            .and_then(Value::as_array)
+            .map(|rules| format!("{} rules", rules.len())),
+        Op::AlertsDelete => args
+            .get("id")
+            .and_then(Value::as_str)
+            .map(|id| format!("rule {id}")),
+        Op::AlertsSilence => args
+            .get("minutes")
+            .and_then(Value::as_u64)
+            .map(|minutes| format!("silence {minutes}m")),
     }
 }
 

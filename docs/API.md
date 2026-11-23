@@ -230,13 +230,64 @@ Códigos de error: `schema`, `capability_not_granted`, `denied`,
 | `op` | `args` | Resultado | Capability |
 |---|---|---|---|
 | `caps.request` | `{cap, units?}` o `{cap, max_bytes?}` | Solicitud pendiente + código de 6 caracteres (TTL 10 min) | ninguna (sólo operator) |
+| `alerts.set` | `{rules: [...]}` (≤20) | Reglas guardadas | `write.alerts` |
+| `alerts.delete` | `{id}` | `{deleted}` | `write.alerts` |
+| `alerts.silence` | `{minutes}` (1..1440) | Silencio activo + reglas | `write.alerts` |
 | `exec.unit_restart` | `{unit}` | `501 not_implemented` tras autorizar | `exec.unit_restart` + unidad en la allow-list |
 | `exec.journal_vacuum` | `{max_bytes}` | `501 not_implemented` tras autorizar | `exec.journal_vacuum` + máximo ≤ concesión |
 | `exec.pkg_cache_clean` | `{max_bytes}` | `501 not_implemented` tras autorizar | `exec.pkg_cache_clean` + máximo ≤ concesión |
 
 `exec.*` está **reservado**: en 0.2 sólo se autoriza para poder verificar que
-la concesión es por dispositivo, y nunca se ejecuta nada. Las operaciones de
-alertas llegan en la siguiente rebanada de 0.2.
+la concesión es por dispositivo, y nunca se ejecuta nada. `write.alerts` viene
+con el scope `operator`; no necesita manifiesto.
+
+### Reglas de alerta
+
+`alerts.set` sustituye el conjunto completo. Una regla ausente se elimina; una
+regla con el mismo `id` y la misma definición conserva su estado e histéresis.
+`id` es estable en el cliente (1..32 caracteres `[a-z0-9_-]`) y hay un máximo de
+20 reglas.
+
+```json
+{
+  "v": 1,
+  "id": "c1f2...",
+  "op": "alerts.set",
+  "args": {
+    "rules": [
+      { "id": "disk-root", "kind": "disk", "mount": "/", "percent": 85, "days": 7 },
+      { "id": "mem", "kind": "memory", "percent": 90 },
+      { "id": "cpu-temp", "kind": "temperature", "celsius": 95 }
+    ]
+  }
+}
+```
+
+| `kind` | Campos | Condición de disparo |
+|---|---|---|
+| `disk` | `mount?` (por defecto: el peor filesystem), `percent?`, `days?` (al menos uno) | `used % > percent` o `days_left < days` |
+| `memory` | `percent` | `used % > percent` |
+| `temperature` | `celsius` | cualquier sensor `> celsius` |
+
+Los campos que no pertenecen al `kind` se rechazan con `400 schema`, igual que
+un `id` duplicado o más de 20 reglas.
+
+**Histéresis:** se dispara al cruzar el umbral y sólo se recupera cuando el
+valor lo cruza de vuelta por 2 unidades (2 puntos porcentuales, 2 días o 2 °C).
+Así, oscilar alrededor del umbral produce un único evento `fired`.
+
+**Predicción de disco:** cada minuto se guarda el uso por mount durante 30 días.
+`days_left` es la regresión lineal del uso en los últimos 7 días; una serie
+plana o que decrece no predice nada y no alerta. Se necesitan al menos 10
+muestras y una hora de historia.
+
+**Silencio:** `alerts.silence` abre una ventana (1..1440 minutos), resetea el
+estado de disparo y registra un evento `silenced` por cada regla que estaba
+disparada. Durante la ventana no se generan eventos; al terminar, una regla que
+siga mal vuelve a disparar una vez.
+
+El historial se conserva 30 días y sobrevive a reinicios y a `vitals-update`
+(SQLite en el directorio de estado).
 
 `caps.request` no concede nada: crea una fila pendiente y muestra el código que
 el operador del host debe aprobar. Sólo acepta capabilities del catálogo
@@ -310,6 +361,50 @@ GET /api/v1/audit?limit=100&before=812
 `outcome` es `accepted`, `rejected` o `replayed`. `detail` se recorta a 200
 caracteres y nunca contiene tokens. Retención: 90 días o 10 000 filas, lo que
 llegue antes.
+
+## GET /api/v1/alerts
+
+Scope `operator`. Devuelve reglas, historial de 30 días y predicciones de disco.
+
+```
+GET /api/v1/alerts?limit=50&before=312
+```
+
+```json
+{
+  "rules": [
+    {
+      "id": "disk-root",
+      "kind": "disk",
+      "mount": "/",
+      "percent": 85.0,
+      "days": 7.0,
+      "celsius": null,
+      "silence_until": 0,
+      "firing": true,
+      "since": 1795472000
+    }
+  ],
+  "events": [
+    {
+      "id": 312,
+      "rule_id": "disk-root",
+      "kind": "disk",
+      "at": 1795472000,
+      "state": "fired",
+      "value": 86.4,
+      "threshold": 85.0,
+      "detail": "disk on /: 86.4% used, 6.2 days left"
+    }
+  ],
+  "predictions": [{ "mount": "/", "days_left": 6.2 }],
+  "retention_days": 30
+}
+```
+
+`events` va del más reciente al más antiguo, paginado por `id` con `before`.
+`state` es `fired`, `recovered`, `silenced` (0.2); `delivered` se añade con los
+canales de 0.2.1. `predictions` sólo incluye mounts con historia suficiente.
 
 ---
 

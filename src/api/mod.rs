@@ -94,6 +94,7 @@ pub fn router(state: AppState) -> Router {
     // inside the handler; the global 8 KB layer caps anything larger.
     let operator = Router::new()
         .route("/api/v1/audit", get(handlers::audit))
+        .route("/api/v1/alerts", get(handlers::alerts))
         .route("/api/v1/command", post(command::command))
         .layer(middleware::from_fn(request_timeout))
         .layer(middleware::from_fn_with_state(
@@ -192,6 +193,7 @@ mod tests {
             "/api/v1/info",
             "/api/v1/stream",
             "/api/v1/audit",
+            "/api/v1/alerts",
         ] {
             assert_eq!(
                 status(&app, "POST", path, Some(&token)).await,
@@ -226,6 +228,10 @@ mod tests {
         );
         assert_eq!(
             status(&app, "GET", "/api/v1/audit", Some(&token)).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status(&app, "GET", "/api/v1/alerts", Some(&token)).await,
             StatusCode::FORBIDDEN
         );
         assert_eq!(

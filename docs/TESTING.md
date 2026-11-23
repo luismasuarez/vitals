@@ -92,6 +92,34 @@ curl --cacert ~/.local/state/vitals/tls-cert.pem \
   -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/v1/audit
 ```
 
+### Alertas
+
+Crear reglas desde un token `operator` (o desde la app, cuando esté la pantalla):
+
+```bash
+curl --cacert ~/.local/state/vitals/tls-cert.pem \
+  -H "Authorization: Bearer <token>" -H 'content-type: application/json' \
+  -d '{"v":1,"id":"t1","op":"alerts.set","args":{"rules":[
+        {"id":"disk-root","kind":"disk","mount":"/","percent":85,"days":7},
+        {"id":"mem","kind":"memory","percent":90},
+        {"id":"cpu-temp","kind":"temperature","celsius":95}]}}' \
+  https://127.0.0.1:8443/api/v1/command
+```
+
+```bash
+# reglas, eventos y predicción de días
+curl --cacert ~/.local/state/vitals/tls-cert.pem \
+  -H "Authorization: Bearer <token>" https://127.0.0.1:8443/api/v1/alerts
+
+# silenciar 8 h
+curl ... -d '{"v":1,"id":"t2","op":"alerts.silence","args":{"minutes":480}}' ...
+```
+
+Para forzar un disparo, pon `percent: 0.1` en la regla de memoria: debe
+aparecer un único evento `fired`, no uno por muestra. Reinicia el agente
+(`systemctl --user restart vitals`) y comprueba que las reglas siguen ahí; el
+historial y las reglas viven en SQLite, así que `vitals-update` tampoco las toca.
+
 Rotar el certificado (obliga a re-emparejar):
 
 ```bash

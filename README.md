@@ -129,6 +129,15 @@ sudo vitals caps list
 sudo vitals caps revoke <device_id> exec.unit_restart
 ```
 
+### Alertas
+
+El agente evalúa reglas de disco, memoria y temperatura en cada muestra, con
+histéresis de 2 unidades, y guarda un historial de 30 días. Las reglas viajan
+por `alerts.set` y el historial se lee con `GET /api/v1/alerts`; ambos son
+`operator`. La predicción de «días restantes» sale de la regresión del uso de
+disco de los últimos 7 días (una serie plana no alerta). El push y el aviso
+local llegan con el watchdog de la app.
+
 ### Rotar el certificado
 
 El pin cambia, así que todos los dispositivos deben re-emparejarse:
@@ -194,7 +203,8 @@ El smoke test cubre: handshake con `--cacert`, 401 sin token, pairing por
 socket, intercambio de código, métricas, histórico, procesos, SSE, reutilización
 de código, revocación, scopes `reader`/`operator`, esquema cerrado de `command`,
 límite de 4 KB, idempotencia, concesión y revocación de capabilities en dos
-dispositivos (por lista y por código), y auditoría visible sólo para `operator`.
+dispositivos (por lista y por código), auditoría visible sólo para `operator`,
+reglas de alerta con histéresis, silencio, borrado y persistencia tras reiniciar.
 La app se probó en un Galaxy A54 contra el agente real.
 
 ## Limitaciones conocidas
@@ -204,7 +214,8 @@ La app se probó en un Galaxy A54 contra el agente real.
   implementado todavía.
 - El token de Android está en SharedPreferences; en producción corresponde al
   Keystore.
-- Sin notificaciones push ni alertas todavía: la app consulta, el servidor no avisa.
+- El agente evalúa y guarda alertas, pero todavía no las envía: el push y la
+  notificación local llegan con el watchdog de la app.
 - `exec.*` está reservado en 0.2: se autoriza por dispositivo pero no se ejecuta.
 - Sin compresión ni paginación: los payloads son pequeños a propósito.
 - `IPAddressDeny=any` en la unit impide egreso y también `bind()` a direcciones

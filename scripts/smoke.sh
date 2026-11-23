@@ -17,18 +17,30 @@ trap cleanup EXIT
 
 printf 'port = %s\n' "$PORT" > "$STATE/config.toml"
 
-"$BIN" --config "$STATE/config.toml" --state-dir "$STATE" serve >"$STATE/serve.log" 2>&1 &
-PID=$!
+start_agent() {
+  "$BIN" --config "$STATE/config.toml" --state-dir "$STATE" serve >>"$STATE/serve.log" 2>&1 &
+  PID=$!
+  for _ in $(seq 1 40); do
+    if curl -fsS --cacert "$CACERT" "$BASE/healthz" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$PID" 2>/dev/null; then
+      echo "server exited during startup:" >&2
+      cat "$STATE/serve.log" >&2
+      exit 1
+    fi
+    sleep 0.25
+  done
+  echo "server did not answer healthz" >&2
+  cat "$STATE/serve.log" >&2
+  exit 1
+}
 
-for _ in $(seq 1 40); do
-  if curl -fsS --cacert "$CACERT" "$BASE/healthz" >/dev/null 2>&1; then break; fi
-  if ! kill -0 "$PID" 2>/dev/null; then
-    echo "server exited during startup:" >&2
-    cat "$STATE/serve.log" >&2
-    exit 1
-  fi
-  sleep 0.25
-done
+restart_agent() {
+  kill "$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null || true
+  start_agent
+}
+
+start_agent
 
 fail() { echo "FAIL: $*" >&2; tail -20 "$STATE/serve.log" >&2; exit 1; }
 pass() { echo "ok   $*"; }
@@ -243,6 +255,86 @@ assert "rejected" in outcomes and "accepted" in outcomes, outcomes
 assert "capability_not_granted" in codes and "not_implemented" in codes, codes
 PY
 pass "operator reads the full audit log, rejections included"
+
+# --- 0.2: alert rules, hysteresis, silence and persistence ----------------
+ALERTS_SET='{"v":1,"id":"alerts-a1","op":"alerts.set","args":{"rules":[{"id":"disk-root","kind":"disk","mount":"/","percent":85,"days":7},{"id":"mem","kind":"memory","percent":90},{"id":"cpu-temp","kind":"temperature","celsius":95}]}}'
+code=$(post_command "$OP_TOKEN" "$ALERTS_SET")
+[[ "$code" == "200" ]] || fail "alerts.set returned $code, expected 200"
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/alerts" > "$STATE/alerts.json" || fail "alerts list"
+python3 - "$STATE/alerts.json" <<'PY' || fail "alerts.set did not persist three rules"
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert len(data["rules"]) == 3, data["rules"]
+assert {r["kind"] for r in data["rules"]} == {"disk", "memory", "temperature"}
+PY
+pass "alerts.set stores the three rule kinds"
+
+code=$(post_command "$OP_TOKEN" '{"v":1,"id":"alerts-bad","op":"alerts.set","args":{"rules":[{"id":"x","kind":"memory","percent":90,"celsius":80}]}}')
+[[ "$code" == "400" ]] || fail "rule with foreign field returned $code, expected 400"
+grep -q '"code":"schema"' "$STATE/command.json" || fail "rule validation error code"
+pass "alert rules reject fields from another kind"
+
+restart_agent
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/alerts" > "$STATE/alerts.json" || fail "alerts after restart"
+python3 - "$STATE/alerts.json" <<'PY' || fail "rules did not survive the agent restart"
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert len(data["rules"]) == 3, data["rules"]
+PY
+pass "alert rules survive an agent restart (and vitals-update)"
+
+# A threshold that is always crossed: exactly one fired event, even across
+# repeated evaluations and a no-op alerts.set with the same definition.
+SET_MEM='{"v":1,"id":"alerts-a2","op":"alerts.set","args":{"rules":[{"id":"mem","kind":"memory","percent":0.1}]}}'
+code=$(post_command "$OP_TOKEN" "$SET_MEM")
+[[ "$code" == "200" ]] || fail "alerts.set mem returned $code"
+
+fired_count() {
+  curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" "$BASE/api/v1/alerts" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for e in d["events"] if e["rule_id"]=="mem" and e["state"]=="fired"))'
+}
+
+FIRED=0
+for _ in $(seq 1 30); do
+  FIRED=$(fired_count || echo 0)
+  [[ "$FIRED" == "1" ]] && break
+  sleep 0.5
+done
+[[ "$FIRED" == "1" ]] || fail "expected one fired event, got $FIRED"
+pass "an always-bad rule fires exactly once"
+
+sleep 6
+FIRED_AGAIN=$(fired_count || echo 0)
+[[ "$FIRED_AGAIN" == "1" ]] || fail "duplicate fired event after re-evaluation: $FIRED_AGAIN"
+code=$(post_command "$OP_TOKEN" "$SET_MEM")
+[[ "$code" == "200" ]] || fail "idempotent alerts.set returned $code"
+sleep 6
+FIRED_AGAIN=$(fired_count || echo 0)
+[[ "$FIRED_AGAIN" == "1" ]] || fail "alerts.set with the same definition re-alerted: $FIRED_AGAIN"
+pass "hysteresis and unchanged definitions do not duplicate alerts"
+
+curl -fsS --cacert "$CACERT" "${OPAUTH[@]}" -H 'content-type: application/json' \
+  -d '{"v":1,"id":"alerts-quiet","op":"alerts.silence","args":{"minutes":480}}' \
+  "$BASE/api/v1/command" > "$STATE/silence.json" || fail "alerts.silence"
+python3 - "$STATE/silence.json" <<'PY' || fail "silence did not reset the firing state"
+import json, sys
+result = json.load(open(sys.argv[1]))["result"]
+assert result["silenced"] == 1, result
+assert all(r["silence_until"] > 0 and not r["firing"] for r in result["rules"]), result["rules"]
+PY
+sleep 6
+FIRED_AGAIN=$(fired_count || echo 0)
+[[ "$FIRED_AGAIN" == "1" ]] || fail "silence did not suppress new alerts: $FIRED_AGAIN"
+pass "silence suppresses alerts and records the silenced episode"
+
+code=$(post_command "$OP_TOKEN" '{"v":1,"id":"alerts-del","op":"alerts.delete","args":{"id":"mem"}}')
+[[ "$code" == "200" ]] || fail "alerts.delete returned $code"
+python3 - "$STATE/command.json" <<'PY' || fail "alerts.delete did not remove the rule"
+import json, sys
+result = json.load(open(sys.argv[1]))["result"]
+assert result["deleted"] is True, result
+PY
+pass "alerts.delete removes a rule"
 
 python3 - "$STATE/control.sock" "$DEVICE_ID" <<'PY'
 import json, socket, sys

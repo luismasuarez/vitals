@@ -17,7 +17,7 @@ https://github.com/luismasuarez/vitals
 | Cosa | Valor |
 |---|---|
 | Rama / HEAD | `main` en `aefd866` (+3 commits de docs sin subir), tag `v0.1.4` |
-| Árbol de trabajo | Rebanada 1 de v0.2 implementada y verificada, **sin commit** |
+| Árbol de trabajo | Rebanada 1 commiteada (`4e9a394`); rebanada 2 (alertas) sin commit |
 | Servidor local | servicio de usuario `systemctl --user vitals`, 0.1.4, activo |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` (SQLite + certificado + clave) |
@@ -128,14 +128,14 @@ negocian:
 
 | # | Entrega | Estado |
 |---|---|---|
-| 1 | `command` + scopes + manifiesto + `audit` | **Hecho**, tests + smoke |
-| 2 | `alerts.set` + evaluador + histéresis | Pendiente |
+| 1 | `command` + scopes + manifiesto + `audit` | **Hecho**, commit `4e9a394` |
+| 2 | `alerts.set` + evaluador + histéresis | **Hecho**, tests + smoke |
 | 3 | Servicio en primer plano + SSE + WorkManager | Pendiente |
 | 4 | Token al Keystore | Pendiente |
 | 5 | `diagnostics` + `suggest` + pantallas | Pendiente |
 | 6 | Release 0.2.0 | Pendiente |
 
-Implementado en la rebanada 1 (todo en `main`, sin commit):
+Implementado en la rebanada 1 (commit `4e9a394`):
 
 - Scope `reader`/`operator` en `devices` y en `pairing_codes`, con migración
   automática de bases 0.1.x. `vitals pair --operator`; el scope viaja en el QR
@@ -152,6 +152,23 @@ Implementado en la rebanada 1 (todo en `main`, sin commit):
 - Rechazos por scope de `command` también se auditan. `diagnostics` y `suggest`
   quedan como `GET` (decisión de esta sesión), para un `reader` también.
 
+Implementado en la rebanada 2 (sin commit al cerrar este turno):
+
+- `src/alerts.rs`: validación cerrada de reglas, máquina de estados con
+  histéresis (2 puntos / 2 días / 2 °C), predicción por regresión de 7 días y
+  evaluador que escribe sólo transiciones.
+- `alerts.set` (reemplazo del conjunto, ≤20, `id` estable; una definición
+  idéntica conserva estado), `alerts.delete` y `alerts.silence` (1..1440 min,
+  resetea disparos y registra `silenced`).
+- Tablas `alert_rules`, `alert_states`, `alert_events` (30 días) y
+  `disk_usage_1m` (por mount, 30 días, una muestra/minuto).
+- `GET /api/v1/alerts`: reglas con estado, eventos paginados y predicciones de
+  días restantes.
+- El sampler graba uso de disco cada minuto y evalúa cada 5 s; el mantenimiento
+  poda alertas y uso de disco.
+- Smoke: 3 tipos de regla, validación por `kind`, persistencia tras reiniciar,
+  un único `fired` en evaluación repetida, silencio y borrado.
+
 ### Decisiones de implementación de 0.2 (ya tomadas)
 
 - Manifiesto: `/etc/vitals/capabilities.toml` en sistema, `<state_dir>/capabilities.toml`
@@ -163,6 +180,11 @@ Implementado en la rebanada 1 (todo en `main`, sin commit):
   `not_implemented`. Así 6b es verificable por API sin adelantar v0.4.
 - `limits` de parámetros: unidades con allow-list explícita (sin comodines),
   máximo de bytes ≤ 10^12.
+- `alerts.set` reemplaza el conjunto completo (≤20 reglas, `id` estable). Una
+  definición idéntica conserva estado e histéresis; una cambiada reinicia.
+  `alerts.silence` resetea disparos y deja un evento `silenced` por regla.
+- Histéresis = 2 unidades absolutas (puntos porcentuales, días o °C). La
+  predicción usa regresión lineal de 7 días, mínimo 10 muestras y 1 hora.
 
 ## Archivos clave
 
@@ -170,6 +192,7 @@ Implementado en la rebanada 1 (todo en `main`, sin commit):
 |---|---|
 | `src/api/` | Router, handlers, SSE |
 | `src/api/command.rs` | Sobre cerrado, autorización, idempotencia, auditoría |
+| `src/alerts.rs` | Reglas, histéresis, predicción, evaluador |
 | `src/caps.rs` | Catálogo, scopes, manifiesto TOML |
 | `src/auth.rs` | Tokens, scopes, códigos de pairing/aprobación, rate limit |
 | `src/control.rs` | Socket unix (pair, devices, info, caps) |
@@ -218,9 +241,6 @@ cd app && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
 
 ## Lo único que queda por precisar
 
-- Esquema exacto de `alerts.set`: ¿una regla por llamada con `id` propio, o el
-  conjunto completo de reglas en cada `set`? Propuesta: lista acotada (≤20) con
-  `id` estable, y `alerts.delete` por `id`.
 - Las 3 plantillas de la pantalla de reglas (disco, memoria, temperatura) y su
   copy exacto.
 - Texto exacto del aviso de riesgo en la pantalla de permisos.
