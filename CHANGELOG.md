@@ -5,6 +5,12 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
+## [0.3.1](https://github.com/luismasuarez/vitals/compare/v0.3.0...v0.3.1) - 2026-11-24
+
+### Corregido
+
+- **app**: hide flat battery chart and tidy energy details
+
 ## [0.3.0](https://github.com/luismasuarez/vitals/compare/v0.2.1...v0.3.0) - 2026-11-24
 
 ### Añadido
