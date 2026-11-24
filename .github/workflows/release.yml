@@ -66,14 +66,20 @@ jobs:
   server:
     name: Server (${{ matrix.target }})
     needs: meta
-    runs-on: ubuntu-latest
+    # aarch64 builds natively on an arm runner: cross + QEMU fails inside the
+    # container when a build script needs a newer glibc than the image ships.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: "true"
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            cross: "false"
     steps:
       - uses: actions/checkout@v4
 
@@ -82,15 +88,24 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
           cache: true
-          build-warnings: warn
 
       - name: Install cross
+        if: matrix.cross == 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cross
 
-      - name: Build static binary
+      - name: Install musl toolchain
+        if: matrix.cross == 'false'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build static binary (cross)
+        if: matrix.cross == 'true'
         run: cross build --locked --release --target "${{ matrix.target }}"
+
+      - name: Build static binary (native)
+        if: matrix.cross == 'false'
+        run: cargo build --locked --release --target "${{ matrix.target }}"
 
       - name: Strip binary
         shell: bash
@@ -104,7 +119,7 @@ jobs:
           # only need the stripped binary for packaging.
           staged="${RUNNER_TEMP}/vitals-${TARGET}"
           cp "${bin}" "${staged}"
-          if [[ "${TARGET}" == aarch64-* ]]; then
+          if [[ "${TARGET}" == aarch64-* && "$(uname -m)" != "aarch64" ]]; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends binutils-aarch64-linux-gnu
             aarch64-linux-gnu-strip -s "${staged}"
