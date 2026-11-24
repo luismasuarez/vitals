@@ -17,6 +17,21 @@ temperatura), guarda un historial de 30 días y la app mantiene una vigilancia d
 host caído con un servicio en primer plano. La única escritura remota pasa por
 `POST /api/v1/command`, con scopes y permisos por dispositivo.
 
+## Cómo usar este documento
+
+Eres el agente que continúa el proyecto. Antes de tocar código:
+
+1. Lee este archivo completo, `docs/API.md`, `docs/PRODUCT.md` y
+   `docs/TESTING.md`.
+2. Comprueba el estado real (sección «Primeros pasos»). Si algo no coincide con
+   este snapshot, gana el sistema real.
+3. No resetees el estado del agente ni borres los datos de la app sin pedido
+   explícito: los dispositivos y reglas actuales son pruebas del usuario.
+4. No hagas commit ni push sin pedido explícito. Commits convencionales en
+   inglés; prosa y documentación en español neutro.
+5. Un build, test o typecheck en rojo es bloqueante. Documentación y código van
+   juntos.
+
 ## Estado exacto
 
 | Cosa | Valor |
@@ -245,6 +260,28 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
 - Silencio desde la UI (la API y el smoke lo cubren).
 - Historial `delivered` y ntfy: 0.2.2.
 
+## Primeros pasos sugeridos
+
+1. Comprobar el estado real:
+
+   ```bash
+   systemctl --user is-active vitals
+   vitals --version
+   vitals devices list
+   vitals tls show
+   adb devices
+   ```
+
+2. Preguntar al usuario si prefiere cerrar las pruebas pendientes o pasar a
+   0.2.2. No resetear nada por iniciativa propia.
+3. Si toca cerrar pruebas: reintentar la plantilla de temperatura en 0.2.1,
+   revisar la auditoría y anotar el resultado.
+4. Si todo está verde: actualizar este archivo y solo entonces planificar 0.2.2
+   (ntfy, `write.channels`, `delivered`).
+5. Si se toca código: `cargo test`, `clippy`, `fmt`, `smoke.sh` y
+   `assembleDebug` antes de release; después `scripts/release.sh`, push de
+   `main` y del tag.
+
 ## Cómo probar desde cero
 
 ```bash
@@ -385,6 +422,20 @@ que verifica checksums.
 - Cualquier cambio de red o de superficie exige revisar el threat model.
 - Un build/typecheck en rojo es bloqueante. Documentación y código van juntos.
 
+## Criterios de aceptación de v0.2
+
+- Un token `reader` recibe 403 en `command`; un `operator` sin manifiesto recibe
+  `capability_not_granted`.
+- Aprobado a A no lo tiene B; revocar A no afecta a B; aprobar por lista y por
+  código produce la misma concesión.
+- `alerts.set` persiste tras reiniciar el agente y tras `vitals-update`.
+- Histéresis: oscilar ±2 % alrededor del umbral no genera más de una alerta.
+- Host caído: notificación en <45 s con el servicio en primer plano y pantalla
+  apagada, y una sola notificación de recuperación. **Validado: 32–33 s.**
+- Batería <5 % en 8 h con la vigilancia activa. **Pendiente.**
+- `cargo test`, `cargo clippy --all-targets`, `smoke.sh` y `assembleDebug` en
+  verde. **Verde** (46 tests).
+
 ## Próximos pasos
 
 1. **v0.2.2**: `write.channels` + ntfy self-hosted en loopback, estado
@@ -395,8 +446,8 @@ que verifica checksums.
 3. **v0.4**: compartir por QR con caducidad, `exec.*` real con polkit/oneshot,
    watcher de servicios y logs acotados.
 
-Antes de abrir 0.2.2, cerrar las pruebas manuales pendientes (QR, permiso de
-notificaciones, WorkManager, batería y update real desde 0.1.4).
+Antes de abrir 0.2.2, cerrar las pruebas manuales pendientes (temperatura en
+0.2.1, WorkManager, batería y update real desde 0.1.4).
 
 ## Lo único que queda por precisar
 
@@ -407,3 +458,7 @@ notificaciones, WorkManager, batería y update real desde 0.1.4).
   funcional).
 - Si `read.alerts` entra en el catálogo o si `GET /alerts` se queda como ruta
   de `operator` sin capability propia.
+- Estrategia para el revive de WorkManager en fabricantes agresivos: exclusión
+  de batería guiada, receiver de boot, o ambos.
+- Si el watchdog debe activarse automáticamente cuando hay reglas o quedarse
+  como interruptor manual del usuario.
