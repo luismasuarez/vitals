@@ -130,14 +130,9 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
         info!("generated a new TLS certificate; run `vitals pair` when the app is ready");
     }
 
-    let endpoints: Vec<String> = candidates
-        .iter()
-        .filter(|c| c.kind != Kind::Loopback)
-        .map(|c| format!("https://{}:{}", net::url_host(c.addr), cfg.port))
-        .collect();
-    if endpoints.is_empty() {
-        warn!("no address outside loopback: the phone will not be able to reach this host");
-    }
+    // The address set changes over time (DHCP, Wi-Fi roam, VPN up/down), so the
+    // supervisor below recomputes it and rewrites this list.
+    let endpoints: Arc<std::sync::RwLock<Vec<String>>> = Arc::new(std::sync::RwLock::new(Vec::new()));
 
     let host = build_host_info(&hostname);
     let (tx, _) = broadcast::channel::<Arc<Sample>>(16);
@@ -148,7 +143,7 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
         tx: tx.clone(),
         last: last.clone(),
         pin: Arc::new(pin.clone()),
-        endpoints: Arc::new(endpoints.clone()),
+        endpoints: endpoints.clone(),
         host: Arc::new(host),
         limiter: Arc::new(auth::RateLimiter::default()),
         procs: Arc::new(Mutex::new(ProcSampler::new())),
@@ -160,40 +155,12 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
     let tls_config = RustlsConfig::from_pem_file(&paths.cert, &paths.key).await?;
     let app = api::router(state.clone());
 
-    // Bind every address up front so a taken port or a missing interface
-    // surfaces at startup instead of silently losing one listener.
-    let mut listeners = Vec::new();
-    for cand in candidates {
-        let addr = SocketAddr::new(cand.addr, cfg.port);
-        match std::net::TcpListener::bind(addr) {
-            Ok(listener) => listeners.push((addr, cand.iface, listener)),
-            Err(e) => warn!(%addr, iface = %cand.iface, error = %e, "cannot bind, skipping"),
-        }
-    }
-    if listeners.is_empty() {
-        bail!("no listener could be bound on port {}", cfg.port);
-    }
-
-    for (addr, iface, listener) in listeners {
-        let app = app.clone();
-        let tls_config = tls_config.clone();
-        tokio::spawn(async move {
-            info!(%addr, %iface, "listening");
-            let server = match axum_server::from_tcp_rustls(listener, tls_config) {
-                Ok(server) => server,
-                Err(e) => {
-                    warn!(%addr, error = %e, "cannot start listener");
-                    return;
-                }
-            };
-            if let Err(e) = server
-                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-                .await
-            {
-                warn!(%addr, error = %e, "listener stopped");
-            }
-        });
-    }
+    tokio::spawn(supervise_listeners(
+        cfg.clone(),
+        tls_config,
+        app,
+        endpoints.clone(),
+    ));
 
     let sock_paths = paths.clone();
     let sock_state = state.clone();
@@ -204,9 +171,6 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
     });
 
     info!(pin = %pin, port = cfg.port, state = %paths.state_dir.display(), "vitals ready");
-    for ep in &endpoints {
-        info!(endpoint = %ep, "pairing endpoint");
-    }
 
     shutdown_signal().await;
     info!("shutting down");
@@ -282,6 +246,100 @@ fn spawn_sampler(
             }
         }
     });
+}
+
+type BoundListener = (axum_server::Handle<SocketAddr>, tokio::task::JoinHandle<()>);
+
+fn endpoint_list(addrs: &[IpAddr], port: u16) -> Vec<String> {
+    let mut list: Vec<String> = addrs
+        .iter()
+        .filter(|addr| net::classify(**addr) != Kind::Loopback)
+        .map(|addr| format!("https://{}:{}", net::url_host(*addr), port))
+        .collect();
+    list.sort();
+    list.dedup();
+    list
+}
+
+/// Keeps listeners in sync with the interfaces that currently have an address.
+/// Binding once at startup left the agent stuck on whatever was up at that
+/// moment (for example only tailscale0 while Wi-Fi was still associating).
+async fn supervise_listeners(
+    cfg: Config,
+    tls: RustlsConfig,
+    app: axum::Router,
+    endpoints: Arc<std::sync::RwLock<Vec<String>>>,
+) {
+    let mut active: std::collections::HashMap<IpAddr, BoundListener> = std::collections::HashMap::new();
+    let mut last_endpoints: Vec<String> = Vec::new();
+
+    loop {
+        let candidates =
+            net::candidates(cfg.bind_mode, cfg.allow_public, &cfg.extra_bind_addrs).unwrap_or_default();
+        let wanted: Vec<IpAddr> = candidates.iter().map(|c| c.addr).collect();
+        let current: Vec<IpAddr> = active.keys().copied().collect();
+        let (stop, start) = net::plan_changes(&current, &wanted);
+
+        for addr in stop {
+            if let Some((handle, task)) = active.remove(&addr) {
+                handle.shutdown();
+                task.abort();
+                info!(%addr, "stopped listening");
+            }
+        }
+
+        for addr in start {
+            let socket = SocketAddr::new(addr, cfg.port);
+            let iface = candidates
+                .iter()
+                .find(|c| c.addr == addr)
+                .map(|c| c.iface.clone())
+                .unwrap_or_default();
+            let listener = match std::net::TcpListener::bind(socket) {
+                Ok(listener) => listener,
+                Err(e) => {
+                    warn!(%socket, %iface, error = %e, "cannot bind");
+                    continue;
+                }
+            };
+
+            let handle = axum_server::Handle::new();
+            let task_handle = handle.clone();
+            let task_app = app.clone();
+            let task_tls = tls.clone();
+            let task = tokio::spawn(async move {
+                info!(addr = %socket, %iface, "listening");
+                match axum_server::from_tcp_rustls(listener, task_tls) {
+                    Ok(server) => {
+                        if let Err(e) = server
+                            .handle(task_handle)
+                            .serve(task_app.into_make_service_with_connect_info::<SocketAddr>())
+                            .await
+                        {
+                            warn!(%socket, error = %e, "listener stopped");
+                        }
+                    }
+                    Err(e) => warn!(%socket, error = %e, "cannot start listener"),
+                }
+            });
+            active.insert(addr, (handle, task));
+        }
+
+        let list = endpoint_list(&wanted, cfg.port);
+        if list != last_endpoints {
+            if let Ok(mut slot) = endpoints.write() {
+                *slot = list.clone();
+            }
+            last_endpoints = list.clone();
+            if list.is_empty() {
+                warn!("sin direcciones utilizables: sólo loopback hasta que aparezca una interfaz");
+            } else {
+                info!(?list, "pairing endpoints");
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }
 
 async fn shutdown_signal() {

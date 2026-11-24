@@ -176,7 +176,11 @@ pub async fn info(State(st): State<AppState>) -> Json<InfoResponse> {
         name: st.host.hostname.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         pin: st.pin.as_ref().clone(),
-        endpoints: st.endpoints.as_ref().clone(),
+        endpoints: st
+            .endpoints
+            .read()
+            .map(|list| list.clone())
+            .unwrap_or_default(),
         devices: st.store.list_devices(),
     })
 }

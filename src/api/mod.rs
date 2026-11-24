@@ -46,7 +46,8 @@ pub struct AppState {
     pub tx: broadcast::Sender<Arc<Sample>>,
     pub last: Arc<Mutex<Option<Arc<Sample>>>>,
     pub pin: Arc<String>,
-    pub endpoints: Arc<Vec<String>>,
+    /// Recomputed whenever the local address set changes.
+    pub endpoints: Arc<std::sync::RwLock<Vec<String>>>,
     pub host: Arc<HostInfo>,
     pub limiter: Arc<RateLimiter>,
     pub procs: Arc<Mutex<ProcSampler>>,

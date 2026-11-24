@@ -152,6 +152,18 @@ pub fn tailscale_dns_suffix() -> Option<String> {
         .map(|s| s.trim_end_matches('.').to_string())
 }
 
+/// Addresses that must be stopped and started when the local set changes.
+pub fn plan_changes(active: &[IpAddr], wanted: &[IpAddr]) -> (Vec<IpAddr>, Vec<IpAddr>) {
+    use std::collections::HashSet;
+    let active: HashSet<IpAddr> = active.iter().copied().collect();
+    let wanted: HashSet<IpAddr> = wanted.iter().copied().collect();
+    let mut stop: Vec<IpAddr> = active.difference(&wanted).copied().collect();
+    let mut start: Vec<IpAddr> = wanted.difference(&active).copied().collect();
+    stop.sort();
+    start.sort();
+    (stop, start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +193,16 @@ mod tests {
         assert!(is_virtual_iface("veth24f5227"));
         assert!(!is_virtual_iface("enp2s0"));
         assert!(!is_virtual_iface("tailscale0"));
+    }
+
+    #[test]
+    fn plans_listener_changes() {
+        let a = v4("192.168.1.10");
+        let b = v4("100.64.0.2");
+        let c = v4("10.0.0.5");
+        let (stop, start) = plan_changes(&[a, b], &[b, c]);
+        assert_eq!(stop, vec![a]);
+        assert_eq!(start, vec![c]);
     }
 
     #[test]

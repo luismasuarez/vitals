@@ -88,7 +88,11 @@ fn dispatch(st: &AppState, req: &Value) -> Value {
                 "v": 1,
                 "name": st.host.hostname.clone(),
                 "dev": label,
-                "ep": st.endpoints.as_ref(),
+                "ep": st
+                    .endpoints
+                    .read()
+                    .map(|list| list.clone())
+                    .unwrap_or_default(),
                 "pin": st.pin.as_ref(),
                 "code": code,
                 "exp": exp,
@@ -113,7 +117,11 @@ fn dispatch(st: &AppState, req: &Value) -> Value {
             "name": st.host.hostname,
             "version": env!("CARGO_PKG_VERSION"),
             "pin": st.pin.as_ref(),
-            "endpoints": st.endpoints.as_ref(),
+            "endpoints": st
+                .endpoints
+                .read()
+                .map(|list| list.clone())
+                .unwrap_or_default(),
             "devices": st.store.count_devices(),
         }),
         Some(other) => json!({ "ok": false, "error": format!("unknown command: {other}") }),
