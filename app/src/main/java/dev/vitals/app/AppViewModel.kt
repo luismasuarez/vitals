@@ -115,21 +115,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val current = session ?: return
         // Keep the endpoint that pairing proved reachable.
         val client = VitalsApi(current).also { it.selectEndpoint(endpointIndex) }
-        api = client
         endpointIndex = client.endpointIndex
         streamFailures = 0
         bootError = null
 
         viewModelScope.launch {
             try {
-                host = client.host()
-                agent = runCatching { client.info() }.getOrNull()
-                val first = client.metrics()
+                val hostInfo = client.host()
+                val info = runCatching { client.info() }.getOrNull()
+                host = hostInfo
+                agent = info
+
+                // Addresses move (DHCP, roam, VPN). The agent reports its
+                // current listener set, so adopt it instead of keeping stale
+                // endpoints from the QR forever.
+                var effective = client
+                val fresh = info?.endpoints.orEmpty()
+                if (fresh.isNotEmpty() && fresh != current.endpoints) {
+                    val updated = current.copy(endpoints = fresh)
+                    store.save(updated)
+                    session = updated
+                    endpointIndex = 0
+                    effective = VitalsApi(updated)
+                }
+                api = effective
+
+                val first = effective.metrics()
                 main.post {
-                    latency = client.latencyMs
+                    latency = effective.latencyMs
                     applySample(first)
                 }
-                seedSeries(client)
+                seedSeries(effective)
                 startStream()
             } catch (e: Throwable) {
                 if (e is ApiException && e.status == 401) {
