@@ -76,7 +76,7 @@ Esfuerzo: S ≤1 semana · M 2–4 semanas · L 1–2 meses (un dev, este repo).
 | 9 | **Logs bajo demanda** | «¿Por qué se cayó?» sin SSH | journald por unidad, tail acotado y filtrado; el agente ya corre con `ProtectSystem` | M | Baja | Privacidad y tamaño; el sandbox limita el acceso |
 | 10 | **Onboarding VPS en 60 s** (`vitals setup`) | En un VPS sin Tailscale el agente no es alcanzable: bind por dirección, nunca `0.0.0.0` | Detectar Tailscale, instalarlo o guiar el `tailscale up`, y emitir el QR al final | S | Baja | Depende de un tercero; permisos de root |
 
-**Estado (0.3.0, en curso):** el candidato #7 ya está implementado en el árbol:
+**Estado (0.3.1, publicado):** el candidato #7 ya está implementado:
 `/metrics` y `/stream` exponen batería, AC, consumo, salud, ciclos y tiempo
 restante; `/host` añade `form_factor` y `virtualized`; el historial guarda
 `battery_pct` y `power_w`; la app muestra una tarjeta de energía y oculta el
@@ -197,7 +197,7 @@ Las capabilities de Linux son demasiado gruesas. Se usan, en orden de preferenci
 Regla de corte: si una fase se retrasa, se recorta por la derecha (lo último de la lista), nunca se solapan fases. Cada entrega sale con changelog, `smoke.sh` ampliado y una nota de threat model si toca red.
 
 > Estado (noviembre de 2026): de la fase 2 sólo está implementada la primera
-> rebanada, «estado del portátil» (v0.3.0, pendiente de release). Multi-host,
+> rebanada, «estado del portátil» (v0.3.1). Multi-host,
 > widget, `vitals setup`, `write.channels` y la aprobación de permisos desde el
 > móvil siguen pendientes.
 

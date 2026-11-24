@@ -247,15 +247,13 @@ La app se probó en un Galaxy A54 contra el agente real.
 
 ## Estado del proyecto
 
-v0.2.1 publicada: contrato `command`, scopes, auditoría, alertas con histéresis
-y predicción, watchdog de host caído, token en Keystore, diagnósticos y
-pantallas de reglas/permisos. Servidor, app Android, mockup web y pipeline de
-release con changelog generado por conventional commits.
+v0.3.1 publicada: contrato `command`, scopes, auditoría, alertas con histéresis
+y predicción, watchdog de host caído, token en Keystore, diagnósticos,
+pantallas de reglas/permisos y **estado del portátil** (batería, AC, consumo,
+salud, `form_factor` e histórico de energía). Servidor, app Android, mockup web
+y pipeline de release con changelog generado por conventional commits.
 
-En el árbol, sin publicar: **0.3.0 «portátil»** con batería, AC, consumo, salud,
-`form_factor` e histórico de energía.
-
-Release: https://github.com/luismasuarez/vitals/releases/tag/v0.2.1
+Release: https://github.com/luismasuarez/vitals/releases/tag/v0.3.1
 
 ## Probar en el móvil
 
@@ -288,10 +286,10 @@ sha256sum -c SHA256SUMS
 
 ```bash
 # 1. Descarga y extrae el archivo de la versión
-curl -L https://github.com/TU_USUARIO/vitals/releases/download/v0.2.1/vitals-0.2.1-x86_64-unknown-linux-musl.tar.gz | tar xz
+curl -L https://github.com/TU_USUARIO/vitals/releases/download/v0.3.1/vitals-0.3.1-x86_64-unknown-linux-musl.tar.gz | tar xz
 
 # 2. Instala el binario, la unit de systemd y la configuración de ejemplo
-sudo install -m 0755 vitals-0.2.1-x86_64-unknown-linux-musl/vitals /usr/local/bin/vitals && sudo install -d /etc/vitals && sudo install -m 0644 vitals-0.2.1-x86_64-unknown-linux-musl/config.toml.example /etc/vitals/config.toml && sudo install -m 0644 vitals-0.2.1-x86_64-unknown-linux-musl/vitals.service /etc/systemd/system/vitals.service
+sudo install -m 0755 vitals-0.3.1-x86_64-unknown-linux-musl/vitals /usr/local/bin/vitals && sudo install -d /etc/vitals && sudo install -m 0644 vitals-0.3.1-x86_64-unknown-linux-musl/config.toml.example /etc/vitals/config.toml && sudo install -m 0644 vitals-0.3.1-x86_64-unknown-linux-musl/vitals.service /etc/systemd/system/vitals.service
 
 # 3. Arranca el servicio
 sudo systemctl daemon-reload && sudo systemctl enable --now vitals
@@ -306,7 +304,7 @@ genera en el primer arranque. Después, empareja el móvil con
 Con el móvil conectado por `adb`:
 
 ```bash
-adb install -r vitals-0.2.1-android.apk
+adb install -r vitals-0.3.1-android.apk
 ```
 
 También puedes descargar el APK desde la página de releases y abrirlo en el

@@ -28,8 +28,8 @@ Para una versión concreta (lo usa el workflow de release):
 
 ```bash
 gradle assembleRelease \
-  -PvitalsVersionName=0.3.0 \
-  -PvitalsVersionCode=300 \
+  -PvitalsVersionName=0.3.1 \
+  -PvitalsVersionCode=301 \
   -PvitalsKeystore=/ruta/release.jks \
   -PvitalsKeystorePassword=... \
   -PvitalsKeyAlias=... \

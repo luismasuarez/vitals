@@ -1,4 +1,4 @@
-# Prompt para continuar — vitals 0.3.0 «portátil»
+# Prompt para continuar — vitals 0.3.1 «portátil»
 
 > Copia este archivo completo como primer mensaje de la nueva sesión.
 
@@ -17,9 +17,9 @@ temperatura), guarda un historial de 30 días y la app mantiene una vigilancia d
 host caído con un servicio en primer plano. La única escritura remota pasa por
 `POST /api/v1/command`, con scopes y permisos por dispositivo.
 
-En 0.3.0 (árbol actual, sin release) añade el estado del portátil: batería, AC,
-consumo, salud y tiempo restante en `/metrics`; `form_factor` en `/host`; e
-histórico de `battery_pct`/`power_w`.
+En 0.3.x añade el estado del portátil: batería, AC, consumo, salud y tiempo
+restante en `/metrics`; `form_factor` en `/host`; e histórico de
+`battery_pct`/`power_w`.
 
 ## Cómo usar este documento
 
@@ -40,28 +40,28 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 
 | Cosa | Valor |
 |---|---|
-| Rama / tag | tag `v0.2.1` en `12155e7`; los commits posteriores son sólo documentación |
-| Árbol actual | 0.3.0 “portátil” implementado y verificado en local, **sin commit, tag ni release** |
-| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.2.1 (CI en verde) |
-| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.2.1-android.apk` |
-| Servidor local | `systemctl --user vitals`, 0.2.1, activo, **2 dispositivos** `mi-telefono` (operator) |
+| Rama / tag | tag `v0.3.1`; `main` puede llevar commits de documentación posteriores |
+| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.1 (CI en verde) |
+| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.1-android.apk` |
+| Servidor local | `systemctl --user vitals`, 0.3.1, activo, **1 dispositivo** `Samsung A54` (operator) |
 | Binario instalado | musl descargado del propio release con `vitals-update --force` |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` en uso, `0700`; reglas `disk-root` y `memory`; `disk-root` disparada |
-| Pin actual | `0nH9iJ_nwpz7msNw4KcnGQ` |
+| Pin actual | `DfQbSeKgP4seLPKq20l_2g` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
-| App instalada | `dev.vitals.app` 0.2.1 desde el APK publicado (`sha256 0c8d09fd…`), datos conservados |
+| App instalada | `dev.vitals.app` 0.3.1 desde el APK publicado, instalada encima de 0.2.1 sin perder datos |
 | App, estado UI | Emparejada como `operator`; notificaciones concedidas; watchdog **vigilando** |
 | Dispositivo de pruebas | Galaxy A54, Android 16 (API 37), por adb en `192.168.1.101:35213` |
 | Firma APK | `~/keystores/vitals-release.jks` + `.properties` (0600); secrets en GitHub |
 
 Este es un **estado vivo** de las pruebas en curso, no una instalación limpia:
-los dos dispositivos y las dos reglas son los que quedaron al validar la app. No
-hay concesiones `exec.*` ni manifiesto. Para volver a cero, usa la sección
-«Cómo probar desde cero».
+el dispositivo y las dos reglas son los que quedaron al validar la app. No hay
+concesiones `exec.*` ni manifiesto. Para volver a cero, usa la sección «Cómo
+probar desde cero».
 
 > Snapshot al cerrar la sesión (23/11/2026). Si se sigue probando, el número de
-> dispositivos, reglas y eventos cambiará; el pin y la versión no.
+> dispositivos, reglas y eventos cambiará; el pin se mantiene mientras no se
+> rote el certificado.
 
 ## Implementado en 0.2.x
 
@@ -136,7 +136,7 @@ todos los campos opcionales, se filtra el mount al serializar y se publicó
   historial; pantalla de permisos con riesgo visible y diálogo de solicitud;
   diagnóstico y comandos en Ajustes.
 
-## Implementado en el árbol (0.3.0, sin publicar)
+## Implementado en 0.3.x (publicado 0.3.1)
 
 ### Estado del portátil
 
@@ -234,7 +234,7 @@ Matices que conviene no olvidar:
 
 ## Pruebas realizadas
 
-En local (última ejecución, árbol 0.3.0):
+En local (última ejecución, 0.3.1):
 
 | Check | Resultado |
 |---|---|
@@ -243,12 +243,15 @@ En local (última ejecución, árbol 0.3.0):
 | `cargo fmt --check` | limpio |
 | `bash scripts/smoke.sh` | completo, con batería y `battery_pct` persistido |
 | `gradle assembleDebug` | verde |
-| CI release `v0.2.1` | verde (histórico; artefactos y SHA publicados) |
+| CI release `v0.3.0` y `v0.3.1` | verde; artefactos y SHA publicados |
+| Actualización local | `vitals-update --force` 0.2.1 → 0.3.1 y APK 0.3.1 encima de 0.2.1 sin perder datos |
 
-En `steampunker` (portátil, chasis 10) el agente nuevo devuelve
+En `steampunker` (portátil, chasis 10) el agente devuelve
 `"form_factor":"laptop"`, `power` con BAT0, AC, consumo, salud y ciclos
 coincidentes con `/sys/class/power_supply`; el objeto desaparece en un host sin
-batería. Falta verlo en el A54 con el APK de 0.3.0.
+batería. En el A54 con el APK 0.3.1, la tarjeta **ENERGÍA** muestra `100 %`,
+`completa`, `salud 84 %`, `1193 ciclos` y `BAT0 / 5B10X025`, coherente con el
+host. Falta la prueba dinámica de desenchufar/enchufar.
 
 En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualización
 0.2.0 → 0.2.1:
@@ -276,6 +279,9 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
   APK 0.2.1 publicado (`sha256 0c8d09fd…`) instalado encima sin perder datos.
 - Se detectó el bug de `mount = "null"` leyendo la auditoría
   (`alerts.set` rechazado con `schema`). Corregido en 0.2.1.
+- Energía 0.3.1: tarjeta visible en Inicio con el host real y el watchdog
+  vigilando; el primer APK 0.3.0 dibujaba una línea espuria con muy pocas
+  muestras y 0.3.1 la oculta hasta tener tres puntos y una serie variable.
 
 ## Pendiente de probar
 
@@ -283,9 +289,10 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
   `mount = "null"` está corregido, pero no se pudo verificar en el dispositivo
   porque estaba en uso. Memoria ya quedó añadida; temperatura debería aceptarse
   sin `schema error`.
-- **Energía 0.3.0**: comparar la tarjeta con `/sys/class/power_supply`, probar
-  desenchufar/enchufar y comprobar que la gráfica de 24 h se llena tras unos
-  minutos. En un host sin batería, verificar que la tarjeta no aparece.
+- **Energía 0.3.1**: ya está verificado el estado en carga completa. Falta
+  desenchufar/enchufar para ver `descargando`, tiempo restante y consumo, y
+  comprobar que la gráfica se llena tras unos minutos. En un VPS, confirmar que
+  la tarjeta no aparece.
 - Revive de WorkManager al matar el proceso y comportamiento del fabricante.
 - Batería **<5 % en 8 h** con pantalla apagada (Battery Historian).
 - Actualización real desde **0.1.4** con `vitals-update`. La 0.2.0 → 0.2.1 sí se
@@ -309,11 +316,10 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
 
 2. Preguntar al usuario si prefiere cerrar las pruebas pendientes o pasar a
    la siguiente entrega. No resetear nada por iniciativa propia.
-3. Si toca cerrar pruebas: temperatura en 0.2.1, energía en 0.3.0, auditoría y
+3. Si toca cerrar pruebas: temperatura en 0.2.1, descarga de energía en 0.3.1, auditoría y
    WorkManager; anotar el resultado en este archivo.
-4. Si todo está verde: publicar 0.3.0 («portátil») con `scripts/release.sh`.
-   Después, la siguiente entrega es `kind: "battery"` + diagnósticos o
-   `write.channels` + ntfy, según prioridad.
+4. 0.3.1 ya está publicado. La siguiente entrega es `kind: "battery"` +
+   diagnósticos o `write.channels` + ntfy, según prioridad.
 5. Si se toca código: `cargo test`, `clippy`, `fmt`, `smoke.sh` y
    `assembleDebug` antes de release; después `scripts/release.sh`, push de
    `main` y del tag.
@@ -414,7 +420,7 @@ cd app
 set -a; source ~/keystores/vitals-release.properties; set +a
 JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
   ~/.local/share/gradle-8.11.1/bin/gradle assembleRelease \
-  -PvitalsVersionName=0.3.0 -PvitalsVersionCode=300 \
+  -PvitalsVersionName=0.3.2 -PvitalsVersionCode=302 \
   -PvitalsKeystore="$storeFile" -PvitalsKeystorePassword="$storePassword" \
   -PvitalsKeyAlias="$keyAlias" -PvitalsKeyPassword="$keyPassword"
 ```
@@ -422,9 +428,9 @@ JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
 ## Proceso de release
 
 ```bash
-scripts/release.sh 0.3.0      # bump Cargo/app/CHANGELOG y tag local
+scripts/release.sh 0.3.2      # bump Cargo/app/CHANGELOG y tag local
 git push origin main
-git push origin v0.3.0        # CI publica binarios + APK
+git push origin v0.3.2        # CI publica binarios + APK
 vitals-update --check         # o --force para reinstalar el release
 ```
 
@@ -448,7 +454,7 @@ que verifica checksums.
   "vitals1:…"` y `-e watch 1|0`.
 - `vitals devices` sin subcomando imprime ayuda; usar `vitals devices list`.
 - El APK se llama `vitals-app-debug.apk` / `vitals-app-release.apk`; el asset
-  del release es `vitals-0.3.0-android.apk`.
+  del release es `vitals-<version>-android.apk`.
 
 ## Convenciones
 
@@ -472,9 +478,9 @@ que verifica checksums.
   apagada, y una sola notificación de recuperación. **Validado: 32–33 s.**
 - Batería <5 % en 8 h con la vigilancia activa. **Pendiente.**
 - `cargo test`, `cargo clippy --all-targets`, `smoke.sh` y `assembleDebug` en
-  verde. **Verde** (46 tests en 0.2.1; 58 en el árbol 0.3.0).
+  verde. **Verde** (46 tests en 0.2.1; 58 en 0.3.x).
 
-## Criterios de aceptación de v0.3.0
+## Criterios de aceptación de v0.3.x
 
 - En un portátil, `/metrics` incluye `power` con porcentaje y estado coherentes
   con `/sys/class/power_supply` (±1 %, ±0,1 W) y `seconds_left`/`to_full` en el
@@ -485,24 +491,24 @@ que verifica checksums.
   los puntos nuevos incluyen `battery_pct` y `power_w`.
 - `cargo test`, `clippy`, `fmt`, `smoke.sh` y `assembleDebug` en verde.
 
+Cumplidos en **0.3.1** salvo la prueba dinámica de descarga (desenchufar y
+comprobar tiempo restante/consumo) y la ausencia visual en un VPS.
+
 ## Próximos pasos
 
-1. **Cerrar 0.3.0 «portátil»**: revisar la tarjeta en el A54, actualizar el
-   APK, ejecutar `scripts/release.sh 0.3.0`, push de `main` y del tag. El árbol
-   no tiene commit ni release todavía.
-2. **0.3.1**: `kind: "battery"` (batería baja sólo descargando, histéresis y
+1. **0.3.2**: `kind: "battery"` (batería baja sólo descargando, histéresis y
    recuperación al conectar AC) y diagnósticos de batería desgastada.
-3. **0.3.x**: `write.channels` + ntfy self-hosted en loopback, estado
+2. **0.3.x**: `write.channels` + ntfy self-hosted en loopback, estado
    `delivered` en el historial y aviso de entrega. Añadir `read.alerts` al
    catálogo o documentar definitivamente que `GET /alerts` va con `operator`.
-4. **v0.3**: multi-host, widget, `vitals setup` para VPS y pantalla de permisos
+3. **v0.3**: multi-host, widget, `vitals setup` para VPS y pantalla de permisos
    completa con aprobación desde el móvil.
-5. **v0.4**: compartir por QR con caducidad, `exec.*` real con polkit/oneshot,
+4. **v0.4**: compartir por QR con caducidad, `exec.*` real con polkit/oneshot,
    watcher de servicios y logs acotados.
 
 Antes de abrir la siguiente entrega, cerrar las pruebas manuales pendientes
-(temperatura en 0.2.1, energía en 0.3.0, WorkManager, batería del móvil y update
-real desde 0.1.4).
+(temperatura en 0.2.1, descarga real de energía en 0.3.1, WorkManager, batería
+del móvil y update real desde 0.1.4).
 
 ## Lo único que queda por precisar
 

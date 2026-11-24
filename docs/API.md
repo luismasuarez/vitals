@@ -225,7 +225,7 @@ o mostrar el pin actual.
 ```json
 {
   "name": "steampunker",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "pin": "RZPKDkL9mRhkkObOA54Hpw",
   "endpoints": ["https://192.168.1.104:8443", "https://100.71.72.48:8443"],
   "devices": [

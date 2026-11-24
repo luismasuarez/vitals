@@ -9,16 +9,16 @@
 
 ## Estado actual
 
-- Versión publicada: **v0.2.1**.
-- Árbol actual: **0.3.0 «portátil»** (batería, consumo, `form_factor` e
-  historial de energía), implementado y verificado en local; sin commit ni
-  release.
-- Release: https://github.com/luismasuarez/vitals/releases/tag/v0.2.1
-- Agente: 0.2.1, servicio de usuario activo, state dir `0700`.
-- App: `dev.vitals.app` 0.2.1, emparejada como `operator` en el A54.
-- Pendiente: cerrar pruebas manuales (temperatura en 0.2.1, energía en 0.3.0,
-  WorkManager, batería del móvil y actualización real desde 0.1.4).
-- Siguiente entrega prevista: **0.2.2** (`write.channels` + ntfy).
+- Versión publicada: **v0.3.1**.
+- Árbol actual: **0.3.1 «portátil»** (batería, consumo, `form_factor` e
+  historial de energía), publicado y verificado en local y en el A54.
+- Release: https://github.com/luismasuarez/vitals/releases/tag/v0.3.1
+- Agente: 0.3.1, servicio de usuario activo, state dir `0700`.
+- App: `dev.vitals.app` 0.3.1, emparejada como `operator` en el A54.
+- Pendiente: descarga dinámica de energía (desenchufar/enchufar), temperatura en
+  0.2.1, WorkManager, batería del móvil y actualización real desde 0.1.4.
+- Siguiente entrega prevista: **0.3.2** (`kind: "battery"` + diagnósticos) o
+  `write.channels` + ntfy.
 
 Todo el detalle —estado exacto, decisiones cerradas, modelo de permisos,
 pruebas realizadas, pendientes, comandos, archivos clave y trampas del
