@@ -5,7 +5,18 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
-## [0.2.0](https://github.com/TU_USUARIO/vitals/compare/v0.1.4...v0.2.0) - 2026-11-23
+## [0.2.1](https://github.com/luismasuarez/vitals/compare/v0.2.0...v0.2.1) - 2026-11-24
+
+### Corregido
+
+- **app**: stop decoding JSON null strings as literals
+
+### Documentación
+
+- record the clean v0.2.0 install and device test results
+- pin the handoff to the current main
+
+## [0.2.0](https://github.com/luismasuarez/vitals/compare/v0.1.4...v0.2.0) - 2026-11-23
 
 ### Añadido
 
@@ -22,20 +33,21 @@ regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 - product strategy and session handoff
 - foreground watchdog and self-hosted ntfy by default
 - refresh session handoff with the closed decisions
+- **changelog**: include the private state directory fix
 
-## [0.1.4](https://github.com/TU_USUARIO/vitals/compare/v0.1.3...v0.1.4) - 2026-11-23
+## [0.1.4](https://github.com/luismasuarez/vitals/compare/v0.1.3...v0.1.4) - 2026-11-23
 
 ### Añadido
 
 - **net**: listen on IPv4 only unless bind_ipv6 is enabled
 
-## [0.1.3](https://github.com/TU_USUARIO/vitals/compare/v0.1.2...v0.1.3) - 2026-11-24
+## [0.1.3](https://github.com/luismasuarez/vitals/compare/v0.1.2...v0.1.3) - 2026-11-24
 
 ### Corregido
 
 - **app**: adopt the endpoint list the agent reports
 
-## [0.1.2](https://github.com/TU_USUARIO/vitals/compare/v0.1.1...v0.1.2) - 2026-11-24
+## [0.1.2](https://github.com/luismasuarez/vitals/compare/v0.1.1...v0.1.2) - 2026-11-24
 
 ### Corregido
 
@@ -48,7 +60,7 @@ regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
 - regenerate changelog for v0.1.2
 
-## [0.1.1](https://github.com/TU_USUARIO/vitals/compare/v0.1.0...v0.1.1) - 2026-11-24
+## [0.1.1](https://github.com/luismasuarez/vitals/compare/v0.1.0...v0.1.1) - 2026-11-24
 
 ### Añadido
 
@@ -58,7 +70,7 @@ regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
 - add end-to-end testing guide for the mobile app
 
-## [0.1.0](https://github.com/TU_USUARIO/vitals/compare/v0.1.4...v0.1.0) - 2026-11-24
+## [0.1.0](https://github.com/luismasuarez/vitals/compare/v0.2.0...v0.1.0) - 2026-11-24
 
 ### Añadido
 
