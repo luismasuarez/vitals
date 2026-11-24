@@ -90,11 +90,50 @@ done
 echo "$METRICS" | grep -q '"cpu"' || fail "metrics"
 pass "metrics snapshot"
 
+# Battery and power are optional: present on laptops, absent on servers.
+HAS_BATTERY=0
+for supply in /sys/class/power_supply/*; do
+  [[ -r "$supply/type" ]] || continue
+  if [[ "$(cat "$supply/type" 2>/dev/null)" == "Battery" ]] \
+    && [[ "$(cat "$supply/present" 2>/dev/null || echo 1)" != "0" ]]; then
+    HAS_BATTERY=1
+  fi
+done
+if [[ "$HAS_BATTERY" == "1" ]]; then
+  echo "$METRICS" | grep -q '"power"' || fail "battery host did not report power"
+  python3 - "$METRICS" <<'PY' || fail "power payload"
+import json, sys
+power = json.loads(sys.argv[1])["power"]
+assert isinstance(power["ac_online"], bool), power
+assert isinstance(power["on_battery"], bool), power
+assert power["batteries"], power
+assert 0 <= power["percent"] <= 100, power
+assert power["status"] in {
+    "charging", "discharging", "full", "not_charging", "unknown"
+}, power
+PY
+  pass "battery and power snapshot"
+else
+  echo "$METRICS" | grep -q '"power"' && fail "host without a battery reported power"
+  pass "no power payload on a host without a battery"
+fi
+
 curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/host" | grep -q '"hostname"' || fail "host"
 pass "static host info"
 
 curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/history?range=1h" | grep -q '"points"' || fail "history"
 pass "history query"
+
+if [[ "$HAS_BATTERY" == "1" ]]; then
+  BATTERY_HISTORY=""
+  for _ in $(seq 1 30); do
+    BATTERY_HISTORY=$(curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/history?range=15m")
+    echo "$BATTERY_HISTORY" | grep -q '"battery_pct"' && break
+    sleep 0.5
+  done
+  echo "$BATTERY_HISTORY" | grep -q '"battery_pct"' || fail "battery history was not persisted"
+  pass "battery history persisted"
+fi
 
 code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/history?range=forever")
 [[ "$code" == "400" ]] || fail "bad range returned $code, expected 400"
