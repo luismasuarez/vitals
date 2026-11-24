@@ -221,12 +221,11 @@ La app se probó en un Galaxy A54 contra el agente real.
 - IPv4 por defecto. `bind_ipv6 = true` en la configuración añade IPv6.
 - Un solo host por sesión. Varios hosts implican varias sesiones, no
   implementado todavía.
-- El token va cifrado al Android Keystore con migración automática; la app
-  0.1.4 instalada aún lo guarda en claro hasta que se instale 0.2.
-- El agente evalúa y guarda alertas; el push por ntfy llega en 0.2.1.
-- La vigilancia de host caído ya está en la app, pero la medición de batería
-  (<5 % en 8 h) y la prueba con pantalla apagada quedan pendientes en un
-  dispositivo físico.
+- El token va cifrado al Android Keystore con migración automática desde 0.1.x;
+  la instalación limpia actual no ejercita esa migración.
+- El agente evalúa y guarda alertas; el push por ntfy llega en 0.2.2.
+- La vigilancia de host caído se validó con pantalla apagada (caída en 32–33 s);
+  la medición de batería (<5 % en 8 h) sigue pendiente en dispositivo físico.
 - `exec.*` está reservado en 0.2: se autoriza por dispositivo pero no se ejecuta.
 - Sin compresión ni paginación: los payloads son pequeños a propósito.
 - `IPAddressDeny=any` en la unit impide egreso y también `bind()` a direcciones
@@ -234,8 +233,12 @@ La app se probó en un Galaxy A54 contra el agente real.
 
 ## Estado del proyecto
 
-Hecho y probado: servidor (fases 1–3), app Android, mockup web y pipeline de
+v0.2.1 publicada: contrato `command`, scopes, auditoría, alertas con histéresis
+y predicción, watchdog de host caído, token en Keystore, diagnósticos y
+pantallas de reglas/permisos. Servidor, app Android, mockup web y pipeline de
 release con changelog generado por conventional commits.
+
+Release: https://github.com/luismasuarez/vitals/releases/tag/v0.2.1
 
 ## Probar en el móvil
 
@@ -268,10 +271,10 @@ sha256sum -c SHA256SUMS
 
 ```bash
 # 1. Descarga y extrae el archivo de la versión
-curl -L https://github.com/TU_USUARIO/vitals/releases/download/v0.2.0/vitals-0.2.0-x86_64-unknown-linux-musl.tar.gz | tar xz
+curl -L https://github.com/TU_USUARIO/vitals/releases/download/v0.2.1/vitals-0.2.1-x86_64-unknown-linux-musl.tar.gz | tar xz
 
 # 2. Instala el binario, la unit de systemd y la configuración de ejemplo
-sudo install -m 0755 vitals-0.2.0-x86_64-unknown-linux-musl/vitals /usr/local/bin/vitals && sudo install -d /etc/vitals && sudo install -m 0644 vitals-0.2.0-x86_64-unknown-linux-musl/config.toml.example /etc/vitals/config.toml && sudo install -m 0644 vitals-0.2.0-x86_64-unknown-linux-musl/vitals.service /etc/systemd/system/vitals.service
+sudo install -m 0755 vitals-0.2.1-x86_64-unknown-linux-musl/vitals /usr/local/bin/vitals && sudo install -d /etc/vitals && sudo install -m 0644 vitals-0.2.1-x86_64-unknown-linux-musl/config.toml.example /etc/vitals/config.toml && sudo install -m 0644 vitals-0.2.1-x86_64-unknown-linux-musl/vitals.service /etc/systemd/system/vitals.service
 
 # 3. Arranca el servicio
 sudo systemctl daemon-reload && sudo systemctl enable --now vitals
@@ -286,7 +289,7 @@ genera en el primer arranque. Después, empareja el móvil con
 Con el móvil conectado por `adb`:
 
 ```bash
-adb install -r vitals-0.2.0-android.apk
+adb install -r vitals-0.2.1-android.apk
 ```
 
 También puedes descargar el APK desde la página de releases y abrirlo en el

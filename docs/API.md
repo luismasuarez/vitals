@@ -171,7 +171,7 @@ o mostrar el pin actual.
 ```json
 {
   "name": "steampunker",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "pin": "RZPKDkL9mRhkkObOA54Hpw",
   "endpoints": ["https://192.168.1.104:8443", "https://100.71.72.48:8443"],
   "devices": [
@@ -404,7 +404,7 @@ GET /api/v1/alerts?limit=50&before=312
 
 `events` va del más reciente al más antiguo, paginado por `id` con `before`.
 `state` es `fired`, `recovered`, `silenced` (0.2); `delivered` se añade con los
-canales de 0.2.1. `predictions` sólo incluye mounts con historia suficiente.
+canales de 0.2.2. `predictions` sólo incluye mounts con historia suficiente.
 
 ## GET /api/v1/caps
 

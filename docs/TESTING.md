@@ -1,7 +1,17 @@
 # Probar en el móvil
 
-Estado: app de producción `0.1.0` instalada en el Galaxy A54 (release, firmada,
-sólo `arm64-v8a`). Falta levantar el agente y emparejar.
+Estado: app `0.2.1` instalada en el Galaxy A54 (release firmada, sólo
+`arm64-v8a`). Agente `0.2.1` activo; el entorno tiene dispositivos y reglas de
+las pruebas en curso. Para volver a cero, usa el reset destructivo del final de
+este documento.
+
+Para empezar una prueba desde cero, empareja como operator y escanea el QR:
+
+```bash
+vitals pair --operator --name "mi-telefono"
+```
+
+Si sólo quieres métricas, omite `--operator`.
 
 ## 1. Instalar y arrancar el agente
 
@@ -224,7 +234,7 @@ App: descarga `vitals-<version>-android.apk` de la página de releases e
 instálala encima (misma clave de firma, los datos se conservan):
 
 ```bash
-adb install -r vitals-0.1.0-android.apk
+adb install -r vitals-0.2.1-android.apk
 ```
 
 La APK es sólo `arm64-v8a`. El keystore de firma vive en
