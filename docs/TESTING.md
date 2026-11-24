@@ -68,6 +68,38 @@ Si el QR no se lee (fuente, zoom o terminal con fondo claro):
 Fuera de casa, activa Tailscale en el móvil: el failover pasa al endpoint
 `100.x` sin cambiar nada en la app.
 
+### Energía en un portátil
+
+1. Comprueba la fuente de verdad en el host:
+
+   ```bash
+   for f in type status capacity power_now energy_now energy_full \
+            energy_full_design voltage_now cycle_count model_name; do
+     printf '%-20s %s\n' "$f" "$(cat /sys/class/power_supply/BAT0/$f 2>/dev/null)"
+   done
+   ```
+
+2. En **Inicio** debe aparecer la tarjeta **ENERGÍA** con el mismo porcentaje
+   (±1) y el mismo estado (`cargando`, `descargando`, `completa`). Si el host no
+   tiene batería, la tarjeta no existe.
+3. Desenchufa el cargador: en la siguiente muestra el estado pasa a
+   `descargando`, aparece el tiempo restante y el consumo en vatios. Enchufa de
+   nuevo: pasa a `cargando` y muestra el tiempo hasta el 100 %.
+4. `GET /api/v1/host` debe devolver `"form_factor":"laptop"` y
+   `"virtualized":false`. En un VPS, `form_factor` será `vm` o `unknown`, y
+   `/metrics` no tendrá `power`.
+5. Historial: tras un par de minutos, el rango `15m` incluye `battery_pct` y
+   `power_w`; la gráfica de la tarjeta usa `24h`.
+
+   ```bash
+   curl --cacert ~/.local/state/vitals/tls-cert.pem \
+     -H "Authorization: Bearer <token>" \
+     'https://127.0.0.1:8443/api/v1/history?range=15m'
+   ```
+
+No hay alerta de batería baja ni diagnósticos de batería en esta entrega: la
+tarjeta es sólo visualización. Tampoco se detectan suspensiones.
+
 ### Vigilancia (host caído)
 
 1. En la app: **Ajustes → Vigilancia** y activa el interruptor. Concede el

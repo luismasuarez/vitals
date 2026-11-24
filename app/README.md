@@ -28,8 +28,8 @@ Para una versión concreta (lo usa el workflow de release):
 
 ```bash
 gradle assembleRelease \
-  -PvitalsVersionName=0.2.1 \
-  -PvitalsVersionCode=200 \
+  -PvitalsVersionName=0.3.0 \
+  -PvitalsVersionCode=300 \
   -PvitalsKeystore=/ruta/release.jks \
   -PvitalsKeystorePassword=... \
   -PvitalsKeyAlias=... \
@@ -104,6 +104,14 @@ notificaciones (Android 13+). Mientras está activa:
 - El estado (`vigilando`, `caído`, `conectando`) también se ve en la píldora del
   topbar y en Inicio.
 
+## Energía
+
+Si el agente reporta `power` (portátiles), **Inicio** muestra una tarjeta con el
+porcentaje, estado de carga, tiempo restante o hasta el 100 %, consumo, salud,
+ciclos y una gráfica de las últimas 24 h. En servidores y VPS el objeto no
+existe y la tarjeta no se dibuja. Los valores salen de `/sys/class/power_supply`
+y el agente los normaliza antes de enviarlos; la app no lee sensores locales.
+
 ## Reglas y permisos
 
 Ambas pantallas se abren desde **Ajustes** y necesitan un token `operator`:
@@ -151,3 +159,5 @@ vitals pair --operator --name "mi-telefono"
 - Sin histórico local: cada rango se pide al host (que sí lo conserva).
 - La app asume un host por sesión. Varios hosts implican varias sesiones, no
   implementado todavía.
+- La tarjeta de energía no distingue eventos de suspensión/reanudación: sólo
+  muestra el estado actual y el histórico de batería y consumo.

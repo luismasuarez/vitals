@@ -2,8 +2,8 @@
 
 Agente de métricas del host sobre HTTPS con certificado propio y pinning.
 Pensado para un cliente Android que consulta CPU, memoria, discos, red,
-temperaturas y procesos de un único host, tanto en la red local como a través
-de Tailscale.
+temperaturas, procesos y, en portátiles, batería y consumo de un único host,
+tanto en la red local como a través de Tailscale.
 
 Un binario, sin runtime, sin dependencias del sistema (SQLite compilado dentro).
 La lectura es libre para cualquier token; la única escritura pasa por un
@@ -138,6 +138,15 @@ por `alerts.set` y el historial se lee con `GET /api/v1/alerts`; ambos son
 disco de los últimos 7 días (una serie plana no alerta). El push y el aviso
 local llegan con el watchdog de la app.
 
+### Portátil
+
+En un portátil, `/metrics` añade un objeto `power` con el porcentaje, el estado,
+la potencia instantánea, el tiempo restante, la salud y los ciclos, leídos de
+`/sys/class/power_supply`. `/host` indica `form_factor: "laptop"` y el historial
+guarda `battery_pct` y `power_w`. En servidores y VPS el objeto no aparece y la
+app oculta la tarjeta, así que el contrato sigue siendo el mismo. No hay
+detección de suspensión ni alerta de batería baja todavía.
+
 ### Rotar el certificado
 
 El pin cambia, así que todos los dispositivos deben re-emparejarse:
@@ -174,6 +183,8 @@ mockup hablando la API real:
   y el código de la solicitud. Requieren token `operator`.
 - **Diagnóstico**: hallazgos del host y el comando exacto que los arreglaría,
   visibles en Ajustes y nunca ejecutados por la app.
+- **Energía**: en un portátil, Inicio muestra batería, estado, tiempo restante,
+  consumo, salud, ciclos y una gráfica de 24 h; se oculta sola en un servidor.
 
 ```bash
 cd app && ./gradlew assembleDebug
@@ -208,12 +219,13 @@ cd app && ./gradlew assembleDebug
 ```
 
 El smoke test cubre: handshake con `--cacert`, 401 sin token, pairing por
-socket, intercambio de código, métricas, histórico, procesos, SSE, reutilización
-de código, revocación, scopes `reader`/`operator`, esquema cerrado de `command`,
-límite de 4 KB, idempotencia, concesión y revocación de capabilities en dos
-dispositivos (por lista y por código), auditoría visible sólo para `operator`,
-reglas de alerta con histéresis, silencio, borrado y persistencia tras reiniciar,
-estado de capabilities por dispositivo y diagnósticos con comandos sugeridos.
+socket, intercambio de código, métricas, batería y energía (si el host la
+tiene), histórico con `battery_pct`, procesos, SSE, reutilización de código,
+revocación, scopes `reader`/`operator`, esquema cerrado de `command`, límite de
+4 KB, idempotencia, concesión y revocación de capabilities en dos dispositivos
+(por lista y por código), auditoría visible sólo para `operator`, reglas de
+alerta con histéresis, silencio, borrado y persistencia tras reiniciar, estado
+de capabilities por dispositivo y diagnósticos con comandos sugeridos.
 La app se probó en un Galaxy A54 contra el agente real.
 
 ## Limitaciones conocidas
@@ -223,7 +235,9 @@ La app se probó en un Galaxy A54 contra el agente real.
   implementado todavía.
 - El token va cifrado al Android Keystore con migración automática desde 0.1.x;
   la instalación limpia actual no ejercita esa migración.
-- El agente evalúa y guarda alertas; el push por ntfy llega en 0.2.2.
+- El agente evalúa y guarda alertas; el push por ntfy sigue pendiente.
+- La energía del portátil es sólo visualización: no hay alerta de batería baja
+  ni detección de suspensión todavía.
 - La vigilancia de host caído se validó con pantalla apagada (caída en 32–33 s);
   la medición de batería (<5 % en 8 h) sigue pendiente en dispositivo físico.
 - `exec.*` está reservado en 0.2: se autoriza por dispositivo pero no se ejecuta.
@@ -237,6 +251,9 @@ v0.2.1 publicada: contrato `command`, scopes, auditoría, alertas con histéresi
 y predicción, watchdog de host caído, token en Keystore, diagnósticos y
 pantallas de reglas/permisos. Servidor, app Android, mockup web y pipeline de
 release con changelog generado por conventional commits.
+
+En el árbol, sin publicar: **0.3.0 «portátil»** con batería, AC, consumo, salud,
+`form_factor` e histórico de energía.
 
 Release: https://github.com/luismasuarez/vitals/releases/tag/v0.2.1
 

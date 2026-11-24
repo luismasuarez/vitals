@@ -1,4 +1,4 @@
-# Prompt para continuar — vitals v0.2.1
+# Prompt para continuar — vitals 0.3.0 «portátil»
 
 > Copia este archivo completo como primer mensaje de la nueva sesión.
 
@@ -16,6 +16,10 @@ Desde v0.2.0 el agente también evalúa reglas de alerta (disco, memoria,
 temperatura), guarda un historial de 30 días y la app mantiene una vigilancia de
 host caído con un servicio en primer plano. La única escritura remota pasa por
 `POST /api/v1/command`, con scopes y permisos por dispositivo.
+
+En 0.3.0 (árbol actual, sin release) añade el estado del portátil: batería, AC,
+consumo, salud y tiempo restante en `/metrics`; `form_factor` en `/host`; e
+histórico de `battery_pct`/`power_w`.
 
 ## Cómo usar este documento
 
@@ -37,6 +41,7 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 | Cosa | Valor |
 |---|---|
 | Rama / tag | tag `v0.2.1` en `12155e7`; los commits posteriores son sólo documentación |
+| Árbol actual | 0.3.0 “portátil” implementado y verificado en local, **sin commit, tag ni release** |
 | Release | https://github.com/luismasuarez/vitals/releases/tag/v0.2.1 (CI en verde) |
 | Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.2.1-android.apk` |
 | Servidor local | `systemctl --user vitals`, 0.2.1, activo, **2 dispositivos** `mi-telefono` (operator) |
@@ -131,6 +136,28 @@ todos los campos opcionales, se filtra el mount al serializar y se publicó
   historial; pantalla de permisos con riesgo visible y diálogo de solicitud;
   diagnóstico y comandos en Ajustes.
 
+## Implementado en el árbol (0.3.0, sin publicar)
+
+### Estado del portátil
+
+- `src/collect/power.rs` lee `/sys/class/power_supply` cada muestra: baterías
+  (`energy_*` o `charge_*`), AC/USB, potencia, tiempo restante, salud y ciclos.
+  Varias baterías se ponderan por capacidad. Sin batería legible el objeto
+  `power` no se serializa.
+- `GET /metrics` y `/stream` incluyen `power`; `GET /host` añade `form_factor`
+  (`laptop`/`desktop`/`server`/`vm`/`unknown`) y `virtualized`.
+- `samples_raw` y `samples_1m` tienen `battery_pct` y `power_w` nullable, con
+  migración para bases anteriores. `GET /history` los promedia ignorando nulos.
+- La app muestra una tarjeta **ENERGÍA** en Inicio (anillo, estado, tiempo
+  restante, consumo, salud, ciclos, modelo y gráfica de 24 h) y la oculta en
+  hosts sin `power`.
+- `smoke.sh` comprueba el objeto en un host con batería, su ausencia sin ella y
+  que el histórico persiste `battery_pct`.
+
+**Fuera de esta entrega, anotado:** `kind: "battery"` para alertar de batería
+baja (sólo descargando, con histéresis y recuperación al conectar AC),
+diagnósticos de batería desgastada y detección de suspensión/reanudación.
+
 ## Modelo de permisos, en concreto
 
 | Capability | Qué permite en 0.2.x | Cómo se obtiene |
@@ -140,7 +167,7 @@ todos los campos opcionales, se filtra el mount al serializar y se publicó
 | `read.history` | `GET /history` | con el scope |
 | `read.audit` | `GET /audit` | sólo `operator` |
 | `write.alerts` | `alerts.set/delete/silence` y `GET /alerts` | sólo `operator` |
-| `write.channels` | reservado para ntfy en 0.2.2 | no disponible todavía |
+| `write.channels` | reservado para ntfy en la siguiente entrega | no disponible todavía |
 | `exec.unit_restart` | autoriza y responde `not_implemented`; allow-list de unidades | aprobación en el host |
 | `exec.journal_vacuum` | ídem, con `max_bytes` | aprobación en el host |
 | `exec.pkg_cache_clean` | ídem, con `max_bytes` | aprobación en el host |
@@ -195,28 +222,33 @@ Matices que conviene no olvidar:
    de usuario); la API jamás lo modifica.
 5. **Auditoría** de 90 días / 10 000 filas; rechazos incluidos.
 6. **Historial de alertas** de 30 días con `fired`/`recovered`/`silenced`
-   (0.2.x). `delivered` llega con `write.channels` en 0.2.2.
+   (0.2.x). `delivered` llega con `write.channels` en la siguiente entrega.
 7. **`exec.*` fuera de 0.2 y 0.3**; en 0.4 sólo con oneshot preinstaladas o
    polkit con allow-list y usuario fijo. El agente nunca corre como root.
 8. **Detección en segundos**: servicio en primer plano + SSE; WorkManager sólo
    como red de seguridad cada 15 min.
-9. **ntfy self-hosted en loopback** por defecto en 0.2.2; `ntfy.sh` sólo como
+9. **ntfy self-hosted en loopback** por defecto en la siguiente entrega; `ntfy.sh` sólo como
    respaldo documentado.
 10. **Diagnósticos como GET** para que un `reader` vea qué le falta sin pedir
     permisos. Los comandos son sugerencias, nunca ejecución.
 
 ## Pruebas realizadas
 
-En local (última ejecución antes del release):
+En local (última ejecución, árbol 0.3.0):
 
 | Check | Resultado |
 |---|---|
-| `cargo test` | 46/46 |
+| `cargo test` | 58/58 |
 | `cargo clippy --all-targets` | limpio |
 | `cargo fmt --check` | limpio |
-| `bash scripts/smoke.sh` | completo |
+| `bash scripts/smoke.sh` | completo, con batería y `battery_pct` persistido |
 | `gradle assembleDebug` | verde |
-| CI release `v0.2.1` | verde; artefactos y SHA publicados |
+| CI release `v0.2.1` | verde (histórico; artefactos y SHA publicados) |
+
+En `steampunker` (portátil, chasis 10) el agente nuevo devuelve
+`"form_factor":"laptop"`, `power` con BAT0, AC, consumo, salud y ciclos
+coincidentes con `/sys/class/power_supply`; el objeto desaparece en un host sin
+batería. Falta verlo en el A54 con el APK de 0.3.0.
 
 En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualización
 0.2.0 → 0.2.1:
@@ -251,6 +283,9 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
   `mount = "null"` está corregido, pero no se pudo verificar en el dispositivo
   porque estaba en uso. Memoria ya quedó añadida; temperatura debería aceptarse
   sin `schema error`.
+- **Energía 0.3.0**: comparar la tarjeta con `/sys/class/power_supply`, probar
+  desenchufar/enchufar y comprobar que la gráfica de 24 h se llena tras unos
+  minutos. En un host sin batería, verificar que la tarjeta no aparece.
 - Revive de WorkManager al matar el proceso y comportamiento del fabricante.
 - Batería **<5 % en 8 h** con pantalla apagada (Battery Historian).
 - Actualización real desde **0.1.4** con `vitals-update`. La 0.2.0 → 0.2.1 sí se
@@ -258,7 +293,7 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
 - Migración de token 0.1.x → 0.2: no aplica a la instalación limpia; el camino
   está cubierto por código y por la comprobación `run-as` de `TESTING.md`.
 - Silencio desde la UI (la API y el smoke lo cubren).
-- Historial `delivered` y ntfy: 0.2.2.
+- Historial `delivered` y ntfy: pendiente.
 
 ## Primeros pasos sugeridos
 
@@ -273,11 +308,12 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
    ```
 
 2. Preguntar al usuario si prefiere cerrar las pruebas pendientes o pasar a
-   0.2.2. No resetear nada por iniciativa propia.
-3. Si toca cerrar pruebas: reintentar la plantilla de temperatura en 0.2.1,
-   revisar la auditoría y anotar el resultado.
-4. Si todo está verde: actualizar este archivo y solo entonces planificar 0.2.2
-   (ntfy, `write.channels`, `delivered`).
+   la siguiente entrega. No resetear nada por iniciativa propia.
+3. Si toca cerrar pruebas: temperatura en 0.2.1, energía en 0.3.0, auditoría y
+   WorkManager; anotar el resultado en este archivo.
+4. Si todo está verde: publicar 0.3.0 («portátil») con `scripts/release.sh`.
+   Después, la siguiente entrega es `kind: "battery"` + diagnósticos o
+   `write.channels` + ntfy, según prioridad.
 5. Si se toca código: `cargo test`, `clippy`, `fmt`, `smoke.sh` y
    `assembleDebug` antes de release; después `scripts/release.sh`, push de
    `main` y del tag.
@@ -337,6 +373,8 @@ probar desde la UI.
 | `src/api/command.rs` | Sobre cerrado, autorización, idempotencia, auditoría |
 | `src/api/handlers.rs` | Router handlers, SSE, audit, alerts, caps, diagnostics |
 | `src/alerts.rs` | Reglas, histéresis, predicción, evaluador |
+| `src/collect/power.rs` | Batería, AC, consumo, salud y tiempo restante desde sysfs |
+| `src/collect/platform.rs` | `form_factor` y detección de virtualización |
 | `src/caps.rs` | Catálogo, scopes, manifiesto TOML |
 | `src/diagnostics.rs` | Hallazgos y comandos exactos, sin ejecutar |
 | `src/auth.rs` | Tokens, scopes, pairing/aprobación, rate limit |
@@ -376,7 +414,7 @@ cd app
 set -a; source ~/keystores/vitals-release.properties; set +a
 JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
   ~/.local/share/gradle-8.11.1/bin/gradle assembleRelease \
-  -PvitalsVersionName=0.2.2 -PvitalsVersionCode=202 \
+  -PvitalsVersionName=0.3.0 -PvitalsVersionCode=300 \
   -PvitalsKeystore="$storeFile" -PvitalsKeystorePassword="$storePassword" \
   -PvitalsKeyAlias="$keyAlias" -PvitalsKeyPassword="$keyPassword"
 ```
@@ -384,9 +422,9 @@ JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
 ## Proceso de release
 
 ```bash
-scripts/release.sh 0.2.2      # bump Cargo/app/CHANGELOG y tag local
+scripts/release.sh 0.3.0      # bump Cargo/app/CHANGELOG y tag local
 git push origin main
-git push origin v0.2.2        # CI publica binarios + APK
+git push origin v0.3.0        # CI publica binarios + APK
 vitals-update --check         # o --force para reinstalar el release
 ```
 
@@ -410,7 +448,7 @@ que verifica checksums.
   "vitals1:…"` y `-e watch 1|0`.
 - `vitals devices` sin subcomando imprime ayuda; usar `vitals devices list`.
 - El APK se llama `vitals-app-debug.apk` / `vitals-app-release.apk`; el asset
-  del release es `vitals-0.2.1-android.apk`.
+  del release es `vitals-0.3.0-android.apk`.
 
 ## Convenciones
 
@@ -434,20 +472,37 @@ que verifica checksums.
   apagada, y una sola notificación de recuperación. **Validado: 32–33 s.**
 - Batería <5 % en 8 h con la vigilancia activa. **Pendiente.**
 - `cargo test`, `cargo clippy --all-targets`, `smoke.sh` y `assembleDebug` en
-  verde. **Verde** (46 tests).
+  verde. **Verde** (46 tests en 0.2.1; 58 en el árbol 0.3.0).
+
+## Criterios de aceptación de v0.3.0
+
+- En un portátil, `/metrics` incluye `power` con porcentaje y estado coherentes
+  con `/sys/class/power_supply` (±1 %, ±0,1 W) y `seconds_left`/`to_full` en el
+  estado correcto.
+- En un host sin batería, `power` no aparece y la app no dibuja la tarjeta.
+- `/host` devuelve `form_factor` y `virtualized` coherentes.
+- Una base 0.2.x migra sin perder filas; `/history` antiguo sigue funcionando y
+  los puntos nuevos incluyen `battery_pct` y `power_w`.
+- `cargo test`, `clippy`, `fmt`, `smoke.sh` y `assembleDebug` en verde.
 
 ## Próximos pasos
 
-1. **v0.2.2**: `write.channels` + ntfy self-hosted en loopback, estado
+1. **Cerrar 0.3.0 «portátil»**: revisar la tarjeta en el A54, actualizar el
+   APK, ejecutar `scripts/release.sh 0.3.0`, push de `main` y del tag. El árbol
+   no tiene commit ni release todavía.
+2. **0.3.1**: `kind: "battery"` (batería baja sólo descargando, histéresis y
+   recuperación al conectar AC) y diagnósticos de batería desgastada.
+3. **0.3.x**: `write.channels` + ntfy self-hosted en loopback, estado
    `delivered` en el historial y aviso de entrega. Añadir `read.alerts` al
    catálogo o documentar definitivamente que `GET /alerts` va con `operator`.
-2. **v0.3**: multi-host, widget, estado del portátil, `vitals setup` para VPS y
-   pantalla de permisos completa con aprobación desde el móvil.
-3. **v0.4**: compartir por QR con caducidad, `exec.*` real con polkit/oneshot,
+4. **v0.3**: multi-host, widget, `vitals setup` para VPS y pantalla de permisos
+   completa con aprobación desde el móvil.
+5. **v0.4**: compartir por QR con caducidad, `exec.*` real con polkit/oneshot,
    watcher de servicios y logs acotados.
 
-Antes de abrir 0.2.2, cerrar las pruebas manuales pendientes (temperatura en
-0.2.1, WorkManager, batería y update real desde 0.1.4).
+Antes de abrir la siguiente entrega, cerrar las pruebas manuales pendientes
+(temperatura en 0.2.1, energía en 0.3.0, WorkManager, batería del móvil y update
+real desde 0.1.4).
 
 ## Lo único que queda por precisar
 
@@ -462,3 +517,5 @@ Antes de abrir 0.2.2, cerrar las pruebas manuales pendientes (temperatura en
   de batería guiada, receiver de boot, o ambos.
 - Si el watchdog debe activarse automáticamente cuando hay reglas o quedarse
   como interruptor manual del usuario.
+- Umbral por defecto de la futura regla `battery`: 15 % o 20 %, y si debe
+  disparar también con el cargador conectado pero sin cargar.

@@ -76,6 +76,13 @@ Esfuerzo: S ≤1 semana · M 2–4 semanas · L 1–2 meses (un dev, este repo).
 | 9 | **Logs bajo demanda** | «¿Por qué se cayó?» sin SSH | journald por unidad, tail acotado y filtrado; el agente ya corre con `ProtectSystem` | M | Baja | Privacidad y tamaño; el sandbox limita el acceso |
 | 10 | **Onboarding VPS en 60 s** (`vitals setup`) | En un VPS sin Tailscale el agente no es alcanzable: bind por dirección, nunca `0.0.0.0` | Detectar Tailscale, instalarlo o guiar el `tailscale up`, y emitir el QR al final | S | Baja | Depende de un tercero; permisos de root |
 
+**Estado (0.3.0, en curso):** el candidato #7 ya está implementado en el árbol:
+`/metrics` y `/stream` exponen batería, AC, consumo, salud, ciclos y tiempo
+restante; `/host` añade `form_factor` y `virtualized`; el historial guarda
+`battery_pct` y `power_w`; la app muestra una tarjeta de energía y oculta el
+bloque en hosts sin batería. Quedan fuera de esta entrega la alerta de batería
+baja, los diagnósticos de batería y la detección de suspensión/reanudación.
+
 ## Las 3 apuestas
 
 ### Apuesta 1 — «Avisos que llegan» (alertas sin cuenta)
@@ -189,17 +196,22 @@ Las capabilities de Linux son demasiado gruesas. Se usan, en orden de preferenci
 
 Regla de corte: si una fase se retrasa, se recorta por la derecha (lo último de la lista), nunca se solapan fases. Cada entrega sale con changelog, `smoke.sh` ampliado y una nota de threat model si toca red.
 
+> Estado (noviembre de 2026): de la fase 2 sólo está implementada la primera
+> rebanada, «estado del portátil» (v0.3.0, pendiente de release). Multi-host,
+> widget, `vitals setup`, `write.channels` y la aprobación de permisos desde el
+> móvil siguen pendientes.
+
 ## MVP de la próxima versión (v0.2.0 «Alertas»)
 
 Una sola entrega: **que el móvil avise de capacidad y de caída sin cuenta ni cloud**.
 
-Alcance: `POST /api/v1/command` con esquema cerrado y scopes `reader`/`operator`; manifiesto de permisos y `GET /api/v1/audit`; `op: alerts.set` para disco (% y días restantes), memoria, temperatura y silencio; evaluador en el agente con histéresis y deduplicación; watchdog en la app con **servicio en primer plano** y SSE para host caído (icono permanente sólo mientras la vigilancia está activa; un job de WorkManager cada 15 min lo revive si el sistema lo mata); `diagnostics.get` + `env.suggest` (hallazgos estructurados y el comando exacto que los arreglaría, sin ejecutarlo); historial de alertas de 30 días; migración del token a Keystore; pantalla de reglas con 3 plantillas y pantalla de permisos con estado concedido/pendiente por dispositivo y el riesgo visible antes de solicitar. ntfy entra en v0.2.2 como `write.channels`, **self-hosted en loopback como canal por defecto** (ntfy.sh sólo como respaldo documentado).
+Alcance: `POST /api/v1/command` con esquema cerrado y scopes `reader`/`operator`; manifiesto de permisos y `GET /api/v1/audit`; `op: alerts.set` para disco (% y días restantes), memoria, temperatura y silencio; evaluador en el agente con histéresis y deduplicación; watchdog en la app con **servicio en primer plano** y SSE para host caído (icono permanente sólo mientras la vigilancia está activa; un job de WorkManager cada 15 min lo revive si el sistema lo mata); `diagnostics.get` + `env.suggest` (hallazgos estructurados y el comando exacto que los arreglaría, sin ejecutarlo); historial de alertas de 30 días; migración del token a Keystore; pantalla de reglas con 3 plantillas y pantalla de permisos con estado concedido/pendiente por dispositivo y el riesgo visible antes de solicitar. ntfy entra en la siguiente entrega como `write.channels`, **self-hosted en loopback como canal por defecto** (ntfy.sh sólo como respaldo documentado).
 
 **Criterios de aceptación verificables**
 
 1. Crear la regla "disco >85 % o <7 días" desde la app en ≤3 toques y verla persistida tras reiniciar el agente y tras `vitals-update`.
 2. Con ntfy self-host en LAN (IP o DNS local), 20 eventos sintéticos entregan p95 <60 s **sin cambiar** la política de egress del unit (la LAN ya está permitida).
-3. Con ntfy público, el instalador genera un drop-in de egress, la app marca "internet: activada" y el threat model documenta qué sale y a dónde. (v0.2.2)
+3. Con ntfy público, el instalador genera un drop-in de egress, la app marca "internet: activada" y el threat model documenta qué sale y a dónde. (siguiente entrega)
 4. Matar el agente: notificación de "host caído" en <45 s (dos keepalives SSE perdidos, keepalive de 15 s); al volver, una sola notificación de recuperación; 0 duplicados en 24 h. Con el servicio en primer plano activo y pantalla apagada.
 5. Histéresis: oscilar ±2 % alrededor del umbral no genera más de 1 alerta; silencio de 1/8/24 h suprime y luego reevalúa.
 6. `POST /api/v1/command` rechaza >4 KB, `op` desconocida, campos desconocidos y valores fuera de rango; un test enumera rutas y falla si aparece cualquier método distinto de GET salvo `pair` y `command`. Un token `reader` recibe 403 en `command`; uno `operator` sin manifiesto recibe `capability_not_granted`.

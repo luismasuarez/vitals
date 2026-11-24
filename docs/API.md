@@ -2,7 +2,8 @@
 
 Base: `https://<endpoint>:8443`. Todo es JSON UTF-8 salvo el stream (SSE).
 Las unidades son explícitas en los sufijos: `_bps` bytes/segundo, `_bytes`
-bytes absolutos, `celsius` grados, `t` segundos UNIX.
+bytes absolutos, `_celsius` grados, `_wh` vatios-hora, `_w` vatios, `_v`
+voltios, `t` segundos UNIX.
 
 Autenticación, salvo donde se indique:
 
@@ -70,9 +71,16 @@ Información estática del host. Cacheable en la app.
   "boot_time": 1795000000,
   "cpu_model": "AMD Ryzen 7 5825U with Radeon Graphics",
   "cores": 16,
-  "mem_total": 16777216000
+  "mem_total": 16777216000,
+  "form_factor": "laptop",
+  "virtualized": false
 }
 ```
+
+`form_factor` es `laptop`, `desktop`, `server`, `vm` o `unknown`. Se deduce
+primero de la virtualización, después del chasis SMBIOS y por último de la
+presencia de una batería. `virtualized` es `true` si se detectó el flag
+`hypervisor` o un fabricante de VM conocido.
 
 ## GET /api/v1/metrics
 
@@ -92,6 +100,36 @@ inmediatamente, así que en la práctica no se ve).
     { "mount": "/", "fs": "ext4", "total": 500000000000, "used": 210000000000, "r_bps": 0, "w_bps": 1024 }
   ],
   "temps": [{ "label": "Tctl", "celsius": 52.0 }],
+  "power": {
+    "ac_online": true,
+    "on_battery": false,
+    "percent": 96.0,
+    "status": "charging",
+    "power_w": 5.2,
+    "seconds_left": null,
+    "seconds_to_full": 9300,
+    "health_pct": 84.2,
+    "cycles": 1193,
+    "batteries": [
+      {
+        "name": "BAT0",
+        "present": true,
+        "status": "charging",
+        "percent": 96.0,
+        "power_w": 5.2,
+        "energy_now_wh": 36.44,
+        "energy_full_wh": 37.88,
+        "energy_full_design_wh": 45.01,
+        "voltage_v": 12.42,
+        "seconds_left": null,
+        "seconds_to_full": 9900,
+        "health_pct": 84.2,
+        "cycles": 1193,
+        "technology": "Li-poly",
+        "model": "5B10X025"
+      }
+    ]
+  },
   "uptime": 123456
 }
 ```
@@ -105,6 +143,18 @@ Notas de semántica:
   `tailscale0` sí se incluye.
 - Filesystems `tmpfs`, `overlay`, `squashfs` y similares se excluyen.
 - `temps` puede venir vacío si no hay `hwmon` legible.
+- `power` **no aparece** en hosts sin batería legible (servidores, VPS,
+  escritorios). Los campos opcionales pueden ser `null`.
+- `status` se normaliza a `charging`, `discharging`, `full`, `not_charging` o
+  `unknown`; no se reenvía el texto crudo del driver.
+- `power_w` es la potencia instantánea de la batería: consumo mientras
+  descarga, potencia de carga mientras carga. Se calcula con `power_now` o,
+  si falta, `current_now × voltage_now`.
+- `seconds_left` y `seconds_to_full` sólo se rellenan en el estado que
+  corresponde. Con varias baterías, el porcentaje, la salud y los tiempos se
+  ponderan por capacidad; `cycles` es el máximo.
+- La energía se normaliza a Wh aunque el driver exponga `charge_*` en µAh:
+  el agente aplica el voltaje del paquete.
 
 ## GET /api/v1/stream
 
@@ -140,13 +190,17 @@ La app debe refrescar el estado completo; no hay replay.
   "from": 1795450354,
   "to": 1795471954,
   "points": [
-    { "t": 1795450354, "cpu": 11.2, "mem": 9412210688, "net_rx": 1200, "net_tx": 80, "disk_r": 0, "disk_w": 512 }
+    { "t": 1795450354, "cpu": 11.2, "mem": 9412210688, "net_rx": 1200, "net_tx": 80, "disk_r": 0, "disk_w": 512, "battery_pct": 96.0, "power_w": 5.2 }
   ]
 }
 ```
 
 `mem` es memoria usada en bytes. Cada punto es el promedio del intervalo.
 Rango desconocido → `400`.
+
+`battery_pct` y `power_w` son opcionales: se omiten en hosts sin batería y en
+las filas anteriores a la migración de 0.3. La app los trata como `null` y no
+rompe la gráfica; el promedio de un intervalo ignora las muestras sin dato.
 
 ## GET /api/v1/processes?sort=cpu|mem&limit=10
 
@@ -171,7 +225,7 @@ o mostrar el pin actual.
 ```json
 {
   "name": "steampunker",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "pin": "RZPKDkL9mRhkkObOA54Hpw",
   "endpoints": ["https://192.168.1.104:8443", "https://100.71.72.48:8443"],
   "devices": [
@@ -404,7 +458,7 @@ GET /api/v1/alerts?limit=50&before=312
 
 `events` va del más reciente al más antiguo, paginado por `id` con `before`.
 `state` es `fired`, `recovered`, `silenced` (0.2); `delivered` se añade con los
-canales de 0.2.2. `predictions` sólo incluye mounts con historia suficiente.
+canales de la siguiente entrega. `predictions` sólo incluye mounts con historia suficiente.
 
 ## GET /api/v1/caps
 
