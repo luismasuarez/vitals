@@ -1,0 +1,24 @@
+# /etc/vitals/config.toml — every key is optional; these are the defaults.
+
+# HTTPS port. Unprivileged on purpose: no capabilities needed.
+port = 8443
+
+# "auto" binds loopback, Tailscale (100.64.0.0/10) and RFC1918 addresses.
+# "all" binds every non-loopback address, public ones included.
+bind_mode = "auto"
+
+# Only matters with bind_mode = "auto". Keep false on a VPS.
+allow_public = false
+
+# Sampling cadence. 1000 ms feeds SSE smoothly without much CPU.
+sample_interval_ms = 1000
+
+# Persist one history row every N samples (10 s at the default cadence).
+persist_every = 10
+
+# Raw samples are kept this long; older data is rolled up to 1-minute rows.
+retention_raw_hours = 24
+retention_1m_days = 30
+
+# Extra addresses to listen on, e.g. a static IP outside the detected set.
+# extra_bind_addrs = ["192.168.1.50"]

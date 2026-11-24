@@ -1,0 +1,43 @@
+[package]
+name = "vitals"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Read-only host metrics API over pinned TLS, for a mobile client"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+axum-server = { version = "0.9", features = ["tls-rustls"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+if-addrs = "0.15"
+qrcode = { version = "0.15", default-features = false }
+rcgen = "0.13"
+rusqlite = { version = "0.43", features = ["bundled"] }
+rustls-pemfile = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2.6"
+sysinfo = "0.39"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "signal",
+    "time",
+    "sync",
+    "net",
+    "fs",
+] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+toml = "0.8"
+tower-http = { version = "0.6", features = ["limit", "timeout", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

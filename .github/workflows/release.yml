@@ -1,0 +1,380 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0 (defaults to Cargo.toml)"
+        required: false
+        type: string
+
+# Least privilege by default; only the release job can write.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      version_code: ${{ steps.version.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version, tag and Android versionCode
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            raw="${INPUT_VERSION}"
+          elif [[ "${REF_TYPE}" == "tag" ]]; then
+            raw="${REF_NAME}"
+          else
+            raw="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          fi
+
+          version="${raw#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '${version}', expected X.Y.Z"
+            exit 1
+          fi
+
+          IFS=. read -r major minor patch <<< "${version}"
+          code=$(( major * 10000 + minor * 100 + patch ))
+
+          {
+            echo "version=${version}"
+            echo "tag=v${version}"
+            echo "version_code=${code}"
+          } >> "${GITHUB_OUTPUT}"
+
+  server:
+    name: Server (${{ matrix.target }})
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          cache: true
+          build-warnings: warn
+
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build static binary
+        run: cross build --locked --release --target "${{ matrix.target }}"
+
+      - name: Strip binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          bin="target/${TARGET}/release/vitals"
+          test -f "${bin}"
+          # Copy first: cross may leave the target dir owned by root, and we
+          # only need the stripped binary for packaging.
+          staged="${RUNNER_TEMP}/vitals-${TARGET}"
+          cp "${bin}" "${staged}"
+          if [[ "${TARGET}" == aarch64-* ]]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends binutils-aarch64-linux-gnu
+            aarch64-linux-gnu-strip -s "${staged}"
+          else
+            strip -s "${staged}"
+          fi
+          file "${staged}"
+
+      - name: Package tarball
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          name="vitals-${VERSION}-${TARGET}"
+          mkdir -p "dist/${name}"
+          install -m 0755 "${RUNNER_TEMP}/vitals-${TARGET}" "dist/${name}/vitals"
+          install -m 0644 deploy/vitals.service "dist/${name}/vitals.service"
+          install -m 0644 deploy/config.toml.example "dist/${name}/config.toml.example"
+          install -m 0644 README.md "dist/${name}/README.md"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          rm -rf "dist/${name}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: dist/vitals-${{ needs.meta.outputs.version }}-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      VERSION_CODE: ${{ needs.meta.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Install Android build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Decode signing keystore
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${ANDROID_KEYSTORE_BASE64}" \
+             && -n "${ANDROID_KEYSTORE_PASSWORD}" \
+             && -n "${ANDROID_KEY_ALIAS}" \
+             && -n "${ANDROID_KEY_PASSWORD}" ]]; then
+            keystore="${RUNNER_TEMP}/vitals-release.jks"
+            printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+            echo "signed=true" >> "${GITHUB_OUTPUT}"
+            echo "keystore=${keystore}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice::Signing secrets are missing; building an unsigned debug APK."
+            echo "signed=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd app
+          gradle_cmd="gradle"
+          if [[ -x ./gradlew ]]; then
+            gradle_cmd="./gradlew"
+          fi
+          if [[ "${{ steps.signing.outputs.signed }}" == "true" ]]; then
+            "${gradle_cmd}" assembleRelease \
+              -PvitalsVersionName="${VERSION}" \
+              -PvitalsVersionCode="${VERSION_CODE}"
+          else
+            "${gradle_cmd}" assembleDebug \
+              -PvitalsVersionName="${VERSION}" \
+              -PvitalsVersionCode="${VERSION_CODE}"
+          fi
+
+      - name: Sign and collect APK
+        shell: bash
+        env:
+          KEYSTORE: ${{ steps.signing.outputs.keystore }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          if [[ "${{ steps.signing.outputs.signed }}" == "true" ]]; then
+            build_tools="${ANDROID_SDK_ROOT}/build-tools/35.0.0"
+            export PATH="${build_tools}:${PATH}"
+
+            apk="app/build/outputs/apk/release/vitals-app-release.apk"
+            if [[ ! -f "${apk}" ]]; then
+              apk="app/build/outputs/apk/release/vitals-app-release-unsigned.apk"
+            fi
+            test -f "${apk}" || { echo "::error::release APK not found"; exit 1; }
+
+            # Align, then sign with the decoded keystore. Passwords are read
+            # from the environment so they never appear in the process list.
+            zipalign -f -p 4 "${apk}" "${RUNNER_TEMP}/app-aligned.apk"
+            apksigner sign \
+              --ks "${KEYSTORE}" \
+              --ks-key-alias "${ANDROID_KEY_ALIAS}" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "dist/vitals-${VERSION}-android.apk" \
+              "${RUNNER_TEMP}/app-aligned.apk"
+            apksigner verify --print-certs "dist/vitals-${VERSION}-android.apk"
+          else
+            apk="app/build/outputs/apk/debug/vitals-app-debug.apk"
+            test -f "${apk}" || { echo "::error::debug APK not found"; exit 1; }
+            install -m 0644 "${apk}" "dist/vitals-${VERSION}-android-debug.apk"
+          fi
+
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [meta, server, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      # Full history and tags so git-cliff can compute the compare link.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List downloaded assets
+        run: ls -lh dist
+
+      # On a v* tag push, HEAD is tagged, so the latest section is this release.
+      - name: Generate changelog section (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: ${{ runner.temp }}/changelog-section.md
+
+      # workflow_dispatch builds the tag, so treat the pending commits as the
+      # unreleased section labelled with the version being published.
+      - name: Generate changelog section (dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --unreleased --strip header --tag ${{ needs.meta.outputs.tag }}
+        env:
+          OUTPUT: ${{ runner.temp }}/changelog-section.md
+
+      - name: Generate SHA256SUMS and release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          CHANGELOG_SECTION: ${{ runner.temp }}/changelog-section.md
+        run: |
+          set -euo pipefail
+
+          # Replace the placeholder repo in the generated changelog links.
+          sed -i "s|TU_USUARIO/vitals|${GITHUB_REPOSITORY}|g" "${CHANGELOG_SECTION}"
+
+          apk="$(find dist -maxdepth 1 -name 'vitals-*-android*.apk' | head -n1)"
+          test -n "${apk}" || { echo "::error::APK asset not found"; exit 1; }
+          apk_name="$(basename "${apk}")"
+          x86="vitals-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          arm="vitals-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          (
+            cd dist
+            sha256sum ./*.tar.gz ./*.apk > SHA256SUMS
+            cat SHA256SUMS
+          )
+
+          {
+            echo "## Descargas"
+            echo
+            echo "| Plataforma | Archivo |"
+            echo "|---|---|"
+            echo "| Linux x86_64 (musl) | [\`${x86}\`](${base}/${x86}) |"
+            echo "| Linux aarch64 (musl) | [\`${arm}\`](${base}/${arm}) |"
+            echo "| Android | [\`${apk_name}\`](${base}/${apk_name}) |"
+            echo
+            echo "Verifica los archivos con [\`SHA256SUMS\`](${base}/SHA256SUMS): \`sha256sum -c SHA256SUMS\`."
+            echo
+            if [[ "${apk_name}" == *-debug.apk ]]; then
+              echo "> **Aviso:** el APK se compiló como *debug* porque este repositorio no tiene"
+              echo "> configurados los secrets de firma. No está firmado para producción;"
+              echo "> instálalo solo para pruebas."
+              echo
+            fi
+            echo "## Instalación del servidor"
+            echo
+            echo '```bash'
+            echo "curl -LO ${base}/${x86}"
+            echo "tar xzf ${x86}"
+            echo "sudo install -m 0755 vitals-${VERSION}-x86_64-unknown-linux-musl/vitals /usr/local/bin/vitals"
+            echo "sudo install -m 0644 vitals-${VERSION}-x86_64-unknown-linux-musl/vitals.service /etc/systemd/system/vitals.service"
+            echo "sudo install -d /etc/vitals"
+            echo "sudo install -m 0644 vitals-${VERSION}-x86_64-unknown-linux-musl/config.toml.example /etc/vitals/config.toml"
+            echo "sudo systemctl daemon-reload && sudo systemctl enable --now vitals"
+            echo '```'
+            echo
+            echo "El servidor escucha en el puerto 8443. Empareja el móvil con \`sudo vitals pair --name <nombre>\`."
+            echo "En ARM64 sustituye \`x86_64\` por \`aarch64\` en los nombres de archivo."
+            echo
+            echo "## Instalación del APK"
+            echo
+            echo '```bash'
+            echo "adb install -r ${apk_name}"
+            echo '```'
+            echo
+            echo "También puedes descargar el APK en el móvil y abrirlo (requiere permitir la"
+            echo "instalación desde orígenes desconocidos)."
+            echo
+            echo "## Cambios"
+            echo
+            cat "${CHANGELOG_SECTION}"
+          } > "${RUNNER_TEMP}/release-body.md"
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          BODY: ${{ runner.temp }}/release-body.md
+        run: |
+          set -euo pipefail
+          assets=(dist/*.tar.gz dist/*.apk dist/SHA256SUMS)
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            gh release create "${TAG}" "${assets[@]}" \
+              --title "vitals ${VERSION}" \
+              --notes-file "${BODY}"
+          else
+            # workflow_dispatch without a tag: create it on the built commit.
+            gh release create "${TAG}" "${assets[@]}" \
+              --title "vitals ${VERSION}" \
+              --notes-file "${BODY}" \
+              --target "${GITHUB_SHA}"
+          fi

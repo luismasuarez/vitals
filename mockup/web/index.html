@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#06080b" />
+<meta name="mobile-web-app-capable" content="yes" />
+<title>vitals</title>
+<link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+
+<div class="phone" id="phone">
+
+  <!-- ============================ onboarding ============================ -->
+  <section class="onboard" id="onboard">
+
+    <div class="onboard__brand" id="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none">
+          <path d="M4 30h7l4-14 6 26 5-20 4 8h14" stroke="currentColor" stroke-width="3"
+                stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </div>
+      <h1>vitals</h1>
+      <p class="muted">Las métricas de tu host, en el bolsillo.</p>
+    </div>
+
+    <!-- 1 · intro -->
+    <div class="onboard__step" data-step="intro">
+      <button class="btn btn--primary" id="btn-scan" type="button">Escanear QR</button>
+      <details class="manual">
+        <summary>Pegar el código a mano</summary>
+        <textarea id="manual-payload" rows="3" spellcheck="false"
+                  placeholder="vitals1:eyJ2IjoxLCJuYW1lIjoi…"></textarea>
+        <button class="btn btn--ghost" id="btn-manual" type="button">Usar este código</button>
+      </details>
+      <p class="hint" id="intro-hint">Genera el QR en el host con <code>vitals pair</code>. Caduca en 5 minutos.</p>
+    </div>
+
+    <!-- 2 · escáner -->
+    <div class="onboard__step" data-step="scan" hidden>
+      <div class="scanner" id="scanner">
+        <video id="scanner-video" playsinline muted></video>
+        <div class="scanner__frame"><span class="scanner__line"></span></div>
+        <div class="scanner__idle" id="scanner-idle">
+          <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M4 12h16"/></svg>
+          <span>Preparando cámara…</span>
+        </div>
+      </div>
+      <p class="hint" id="scan-hint">Apunta al QR que muestra el host.</p>
+
+      <div class="scan-fallback" id="scan-fallback" hidden>
+        <label class="btn btn--ghost file-btn">
+          Elegir una foto del QR
+          <input type="file" id="qr-file" accept="image/*" />
+        </label>
+        <textarea id="scan-payload" rows="3" spellcheck="false"
+                  placeholder="vitals1:eyJ2IjoxLCJuYW1lIjoi…"></textarea>
+        <button class="btn btn--primary" id="btn-scan-manual" type="button">Conectar con este código</button>
+      </div>
+
+      <button class="btn btn--ghost" id="btn-cancel-scan" type="button">Cancelar</button>
+    </div>
+
+    <!-- 3 · encontrado -->
+    <div class="onboard__step" data-step="found" hidden>
+      <div class="found">
+        <div class="found__row"><span>Host</span><strong id="found-host">—</strong></div>
+        <div class="found__row"><span>Endpoints</span><strong id="found-endpoints">—</strong></div>
+        <div class="found__row"><span>Pin</span><code id="found-pin">—</code></div>
+        <div class="found__row"><span>Código</span><code id="found-code">—</code></div>
+        <div class="found__row"><span>Caduca</span><strong id="found-exp">—</strong></div>
+      </div>
+      <button class="btn btn--primary" id="btn-pair" type="button">Emparejar</button>
+      <button class="btn btn--ghost" id="btn-rescan" type="button">Escanear otro</button>
+    </div>
+
+    <!-- 4 · progreso -->
+    <div class="onboard__step" data-step="pairing" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="muted" id="pairing-text">Intercambiando el código por un token…</p>
+    </div>
+
+    <!-- 5 · fin -->
+    <div class="onboard__step" data-step="done" hidden>
+      <div class="check" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6.5" /></svg>
+      </div>
+      <h2 class="done-title">Emparejado</h2>
+      <p class="muted" id="done-text">Token guardado en este dispositivo.</p>
+      <button class="btn btn--primary" id="btn-enter" type="button">Ver el host</button>
+    </div>
+
+    <!-- error -->
+    <div class="onboard__step" data-step="error" hidden>
+      <div class="alert">
+        <strong id="err-title">No se pudo conectar</strong>
+        <p id="err-text" class="muted">—</p>
+      </div>
+      <button class="btn btn--primary" id="btn-retry-pair" type="button">Reintentar</button>
+      <button class="btn btn--ghost" id="btn-restart-onboard" type="button">Empezar de nuevo</button>
+    </div>
+  </section>
+
+  <!-- ============================== shell ============================== -->
+  <div class="shell" id="shell" hidden>
+
+    <header class="topbar">
+      <button class="topbar__host" id="host-btn" type="button">
+        <span class="topbar__name" id="host-name">—</span>
+        <span class="topbar__os muted" id="host-os">—</span>
+      </button>
+      <div class="topbar__right">
+        <button class="pill" id="conn-pill" type="button" title="Conexión y endpoints">
+          <span class="pill__dot" id="conn-dot"></span>
+          <span id="conn-label">—</span>
+        </button>
+        <button class="icon-btn" id="settings-btn" type="button" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="screens" id="screens">
+
+      <!-- inicio -->
+      <section class="screen is-active" data-screen="home">
+        <div class="card card--hero">
+          <div class="ring" id="ring-cpu">
+            <svg viewBox="0 0 120 120">
+              <circle class="ring__track" cx="60" cy="60" r="52" />
+              <circle class="ring__value" cx="60" cy="60" r="52" id="ring-arc" />
+            </svg>
+            <div class="ring__center">
+              <span class="ring__num" id="cpu-total">—</span><span class="ring__unit">%</span>
+            </div>
+          </div>
+          <div class="hero__meta">
+            <span class="label">CPU</span>
+            <div class="chips">
+              <span class="chip" id="chip-load">load —</span>
+              <span class="chip" id="chip-temp">— °C</span>
+            </div>
+            <div class="hero__sub muted" id="cpu-model">—</div>
+          </div>
+          <canvas class="spark" id="spark-cpu"></canvas>
+        </div>
+
+        <div class="card">
+          <div class="card__head"><h2>Memoria</h2><span class="muted" id="mem-pct">—</span></div>
+          <div class="stackbar"><i class="stackbar__used" id="mem-used"></i><i class="stackbar__cache" id="mem-cache"></i></div>
+          <div class="row-split">
+            <span id="mem-text">—</span>
+            <span class="muted" id="swap-text">—</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__head"><h2>Red</h2><span class="muted" id="net-total">—</span></div>
+          <canvas class="spark spark--tall" id="spark-net"></canvas>
+          <div class="legend">
+            <span><i class="dot dot--rx"></i><b id="net-rx">—</b> bajada</span>
+            <span><i class="dot dot--tx"></i><b id="net-tx">—</b> subida</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__head"><h2>Discos</h2><span class="muted" id="disk-io">—</span></div>
+          <div class="disk-list" id="disk-list"></div>
+        </div>
+
+        <p class="footnote" id="uptime">—</p>
+      </section>
+
+      <!-- cpu -->
+      <section class="screen" data-screen="cpu">
+        <div class="card">
+          <div class="card__head"><h2>Total</h2><span class="muted" id="cpu-now">—</span></div>
+          <canvas class="chart" id="chart-cpu"></canvas>
+          <div class="legend legend--tight">
+            <span class="muted" id="cpu-min">mín —</span>
+            <span class="muted" id="cpu-avg">med —</span>
+            <span class="muted" id="cpu-max">máx —</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__head"><h2>Núcleos</h2><span class="muted" id="cores-count">—</span></div>
+          <div class="cores" id="cores"></div>
+        </div>
+
+        <div class="grid3">
+          <div class="card card--mini"><span class="label">load 1m</span><b id="load1">—</b></div>
+          <div class="card card--mini"><span class="label">load 5m</span><b id="load5">—</b></div>
+          <div class="card card--mini"><span class="label">load 15m</span><b id="load15">—</b></div>
+        </div>
+
+        <div class="card">
+          <div class="card__head"><h2>Temperaturas</h2></div>
+          <div class="chips chips--wrap" id="temps"><span class="muted">—</span></div>
+        </div>
+      </section>
+
+      <!-- red -->
+      <section class="screen" data-screen="net">
+        <div class="card">
+          <div class="card__head"><h2>Tráfico</h2>
+            <div class="segmented" id="net-range">
+              <button class="is-active" data-range="live" type="button">Ahora</button>
+              <button data-range="1h" type="button">1 h</button>
+              <button data-range="6h" type="button">6 h</button>
+            </div>
+          </div>
+          <div class="row-split row-split--big">
+            <span><i class="dot dot--rx"></i><b id="net-rx-big">—</b><small>/s</small></span>
+            <span><i class="dot dot--tx"></i><b id="net-tx-big">—</b><small>/s</small></span>
+          </div>
+          <canvas class="chart" id="chart-net"></canvas>
+        </div>
+
+        <div class="card">
+          <div class="card__head"><h2>Interfaces</h2></div>
+          <div class="iface-list" id="iface-list"></div>
+        </div>
+      </section>
+
+      <!-- procesos -->
+      <section class="screen" data-screen="procs">
+        <div class="card">
+          <div class="searchbar">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="proc-search" type="search" placeholder="Filtrar procesos" autocomplete="off" />
+          </div>
+          <div class="segmented segmented--left" id="proc-sort">
+            <button class="is-active" data-sort="cpu" type="button">CPU</button>
+            <button data-sort="mem" type="button">Memoria</button>
+          </div>
+        </div>
+        <div class="card card--flush">
+          <div class="proc-list" id="proc-list"></div>
+        </div>
+      </section>
+
+    </main>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tab is-active" data-go="home" type="button">
+        <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/></svg>
+        <span>Inicio</span>
+      </button>
+      <button class="tab" data-go="cpu" type="button">
+        <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></svg>
+        <span>CPU</span>
+      </button>
+      <button class="tab" data-go="net" type="button">
+        <svg viewBox="0 0 24 24"><path d="M12 20V8"/><path d="m7 13 5-5 5 5"/><path d="M4 20h16"/></svg>
+        <span>Red</span>
+      </button>
+      <button class="tab" data-go="procs" type="button">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span>Procesos</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ============================== sheets ============================== -->
+  <div class="sheet" id="sheet-endpoints" hidden>
+    <div class="sheet__panel">
+      <div class="sheet__grip"></div>
+      <h2>Conexión</h2>
+      <p class="hint">La app prueba los endpoints en orden y cae al siguiente si no hay respuesta.</p>
+      <div class="endpoint-list" id="sheet-endpoints-list"></div>
+      <div class="kv"><span>Transporte</span><b id="transport">—</b></div>
+      <div class="kv"><span>Latencia</span><b id="latency">—</b></div>
+      <button class="btn btn--ghost" id="btn-reconnect" type="button">Reconectar ahora</button>
+      <button class="btn btn--ghost" data-close-sheet type="button">Cerrar</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="sheet-settings" hidden>
+    <div class="sheet__panel">
+      <div class="sheet__grip"></div>
+      <h2>Ajustes</h2>
+
+      <div class="section">
+        <h3>Host</h3>
+        <div class="kv"><span>Nombre</span><b id="set-host">—</b></div>
+        <div class="kv"><span>Pin</span><code id="set-pin">—</code></div>
+        <div class="kv"><span>Token</span><code id="set-token">—</code></div>
+        <div class="kv"><span>Versión</span><span id="set-version">—</span></div>
+      </div>
+
+      <div class="section">
+        <h3>Dispositivos emparejados</h3>
+        <div class="device-list" id="device-list"></div>
+        <p class="hint">La API es de sólo lectura: revocar se hace en el host con <code>vitals devices revoke</code>.</p>
+      </div>
+
+      <div class="section section--danger">
+        <h3>Zona peligrosa</h3>
+        <button class="btn btn--danger" id="btn-reset" type="button">Olvidar host y reiniciar</button>
+      </div>
+
+      <button class="btn btn--ghost" data-close-sheet type="button">Cerrar</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script src="js/charts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

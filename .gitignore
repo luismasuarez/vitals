@@ -1,0 +1,13 @@
+/target
+/vitals-state
+*.db
+*.db-wal
+*.db-shm
+
+# Android app
+/app/.gradle
+/app/build
+/app/local.properties
+/app/.kotlin
+*.iml
+/.idea

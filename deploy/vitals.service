@@ -1,0 +1,64 @@
+[Unit]
+Description=Vitals host metrics agent (read-only API over pinned TLS)
+Documentation=file:/usr/local/share/doc/vitals/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vitals serve
+Environment=RUST_LOG=vitals=info
+Restart=on-failure
+RestartSec=3
+
+# Dedicated, ephemeral identity. The service owns the database and the
+# certificate; the CLI never writes them.
+DynamicUser=yes
+StateDirectory=vitals
+StateDirectoryMode=0700
+ConfigurationDirectory=vitals
+RuntimeDirectory=vitals
+RuntimeDirectoryMode=0700
+UMask=0077
+
+# --- sandbox -------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Keep /proc readable enough to list processes. Setting
+# ProtectProc=invisible would hide every process not owned by the
+# dynamic user, which breaks the process list entirely.
+ProtectProc=default
+ProcSubset=pid
+
+# PrivateDevices=yes blocks sensors behind /dev (nvidia NVML, etc.).
+# Temperatures from /sys/class/hwmon still work. Enable it if you do
+# not need GPU metrics:
+#PrivateDevices=yes
+
+# The unix control socket needs AF_UNIX; the API needs INET/INET6.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Egress allow-list: the agent has no business talking to the internet.
+# Note this also applies to bind(): a public address cannot be bound, so
+# `allow_public = true` in config.toml needs this list widened to match.
+IPAddressDeny=any
+IPAddressAllow=localhost link-local 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fd7a:115c:a1e0::/48
+
+[Install]
+WantedBy=multi-user.target
