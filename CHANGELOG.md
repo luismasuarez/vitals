@@ -5,6 +5,13 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
+## [0.1.2](https://github.com/luismasuarez/vitals/compare/v0.1.1...v0.1.2) - 2026-11-24
+
+### Corregido
+
+- **install**: run under bash, tolerate prefixed checksums, simplify the user unit
+- **net**: rescan interfaces and rebind listeners every few seconds
+
 ## [0.1.1](https://github.com/luismasuarez/vitals/compare/v0.1.0...v0.1.1) - 2026-11-24
 
 ### Añadido
