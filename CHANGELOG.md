@@ -5,20 +5,26 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
-## [0.1.2](https://github.com/TU_USUARIO/vitals/compare/v0.1.2...v0.1.2) - 2026-11-24
+## [0.1.3](https://github.com/luismasuarez/vitals/compare/v0.1.2...v0.1.3) - 2026-11-24
 
 ### Corregido
 
-- **ci**: keep the Google mirror out of CI builds
+- **app**: adopt the endpoint list the agent reports
 
-## [0.1.2](https://github.com/TU_USUARIO/vitals/compare/v0.1.1...v0.1.2) - 2026-11-24
+## [0.1.2](https://github.com/luismasuarez/vitals/compare/v0.1.1...v0.1.2) - 2026-11-24
 
 ### Corregido
 
 - **install**: run under bash, tolerate prefixed checksums, simplify the user unit
 - **net**: rescan interfaces and rebind listeners every few seconds
+- **ci**: keep the Google mirror out of CI builds
+- **ci**: build aarch64 natively on an arm runner
 
-## [0.1.1](https://github.com/TU_USUARIO/vitals/compare/v0.1.0...v0.1.1) - 2026-11-24
+### Documentación
+
+- regenerate changelog for v0.1.2
+
+## [0.1.1](https://github.com/luismasuarez/vitals/compare/v0.1.0...v0.1.1) - 2026-11-24
 
 ### Añadido
 
@@ -28,7 +34,7 @@ regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
 - add end-to-end testing guide for the mobile app
 
-## [0.1.0](https://github.com/TU_USUARIO/vitals/releases/tag/v0.1.0) - 2026-11-24
+## [0.1.0](https://github.com/luismasuarez/vitals/releases/tag/v0.1.0) - 2026-11-24
 
 ### Añadido
 
