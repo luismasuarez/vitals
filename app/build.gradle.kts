@@ -19,6 +19,12 @@ android {
         targetSdk = 35
         versionCode = vitalsVersionCode
         versionName = vitalsVersionName
+
+        // One architecture only: arm64 devices (the target phone) get a much
+        // smaller APK; ML Kit and CameraX ship native libs for four ABIs.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {

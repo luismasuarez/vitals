@@ -155,14 +155,27 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
+      # The runner already ships an Android SDK; the setup-android action tries
+      # to install the legacy "tools" package and fails. Use the SDK directly.
+      - name: Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [[ ! -d "${sdk}" ]]; then
+            echo "::error::no Android SDK found at ${sdk}"
+            exit 1
+          fi
+          echo "ANDROID_SDK_ROOT=${sdk}" >> "${GITHUB_ENV}"
+          echo "ANDROID_HOME=${sdk}" >> "${GITHUB_ENV}"
+          sdkmanager="$(ls -d "${sdk}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1 || true)"
+          if [[ -n "${sdkmanager}" ]]; then
+            yes | "${sdkmanager}" --licenses >/dev/null 2>&1 || true
+            "${sdkmanager}" --install "platforms;android-35" "build-tools;35.0.0" >/dev/null 2>&1 || true
+          fi
+          ls "${sdk}/platforms" "${sdk}/build-tools"
 
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.11.1"
-
-      - name: Install Android build tools
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Decode signing keystore
         id: signing
@@ -210,7 +223,11 @@ jobs:
           mkdir -p dist
 
           if [[ "${{ steps.signing.outputs.signed }}" == "true" ]]; then
-            build_tools="${ANDROID_SDK_ROOT}/build-tools/35.0.0"
+            build_tools="$(ls -d "${ANDROID_SDK_ROOT}"/build-tools/* 2>/dev/null | sort -V | tail -n1)"
+            if [[ -z "${build_tools}" ]]; then
+              echo "::error::no build-tools in ${ANDROID_SDK_ROOT}"
+              exit 1
+            fi
             export PATH="${build_tools}:${PATH}"
 
             apk="app/build/outputs/apk/release/vitals-app-release.apk"
