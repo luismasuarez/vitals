@@ -5,6 +5,22 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
+## [0.3.0](https://github.com/luismasuarez/vitals/compare/v0.2.1...v0.3.0) - 2026-11-24
+
+### Añadido
+
+- **power**: expose battery, mains and laptop state
+
+### Documentación
+
+- rewrite the handoff for v0.2.1 and the live test state
+- make NEXT-SESSION the canonical handoff
+- document laptop metrics for 0.3.0
+
+### Pruebas
+
+- **smoke**: cover battery payload and history
+
 ## [0.2.1](https://github.com/luismasuarez/vitals/compare/v0.2.0...v0.2.1) - 2026-11-24
 
 ### Corregido
@@ -70,7 +86,7 @@ regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
 - add end-to-end testing guide for the mobile app
 
-## [0.1.0](https://github.com/luismasuarez/vitals/compare/v0.2.0...v0.1.0) - 2026-11-24
+## [0.1.0](https://github.com/luismasuarez/vitals/compare/v0.2.1...v0.1.0) - 2026-11-24
 
 ### Añadido
 
