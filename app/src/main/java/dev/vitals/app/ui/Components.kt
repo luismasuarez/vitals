@@ -84,6 +84,17 @@ object Fmt {
         }
     }
 
+    /** Coarse duration for the battery card: hours and minutes, never days. */
+    fun duration(secs: Long?): String {
+        if (secs == null || secs <= 0) return "—"
+        val h = secs / 3600
+        val m = (secs % 3600) / 60
+        return if (h > 0) "${h} h ${m} min" else "${m} min"
+    }
+
+    fun watts(value: Float?): String =
+        if (value == null) "—" else String.format(Locale.US, "%.1f W", value)
+
     fun one(value: Float): String = String.format(Locale.US, "%.1f", value)
 
     fun whole(value: Float): String = String.format(Locale.US, "%.0f", value)

@@ -40,6 +40,10 @@ pub struct HostInfo {
     pub cpu_model: String,
     pub cores: usize,
     pub mem_total: u64,
+    /// `laptop`, `desktop`, `server`, `vm` or `unknown`.
+    pub form_factor: String,
+    /// True when a hypervisor flag or SMBIOS marker was found.
+    pub virtualized: bool,
 }
 
 #[derive(Clone)]
@@ -148,6 +152,8 @@ mod tests {
                 cpu_model: "test".into(),
                 cores: 1,
                 mem_total: 1024,
+                form_factor: "unknown".into(),
+                virtualized: false,
             }),
             limiter: Arc::new(RateLimiter::default()),
             cmd_limiter: Arc::new(DeviceLimiter::default()),

@@ -81,6 +81,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var sample by mutableStateOf<Sample?>(null)
     var series by mutableStateOf(Series())
     var history by mutableStateOf<List<Point>>(emptyList())
+    var powerHistory by mutableStateOf<List<Point>>(emptyList())
     var procs by mutableStateOf<List<Proc>>(emptyList())
 
     var alertReport by mutableStateOf<AlertReport?>(null)
@@ -115,6 +116,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var streamFailures = 0
     private var pollJob: Job? = null
     private var procJob: Job? = null
+    private var powerHistoryAt = 0L
 
     val endpoints: List<String> get() = session?.endpoints.orEmpty()
     val activeEndpoint: String get() = endpoints.getOrElse(endpointIndex) { "" }
@@ -184,6 +186,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     applySample(first)
                 }
                 seedSeries(effective)
+                if (first.power != null) loadPowerHistory()
                 startStream()
             } catch (e: Throwable) {
                 if (e is ApiException && e.status == 401) {
@@ -314,6 +317,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         screen = target
         if (target == Screen.Procs) startProcPolling() else stopProcPolling()
         if (target == Screen.Net && netRange != "live" && history.isEmpty()) loadHistory(netRange)
+        if (target == Screen.Home && sample?.power != null &&
+            (powerHistoryAt == 0L || System.currentTimeMillis() - powerHistoryAt > 300_000)
+        ) {
+            loadPowerHistory()
+        }
         if (target == Screen.Rules) loadAlerts()
         if (target == Screen.Caps) loadCaps()
     }
@@ -326,6 +334,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { client.history(range) }
                 .onSuccess { history = it }
                 .onFailure { toast = "Histórico no disponible" }
+        }
+    }
+
+    fun loadPowerHistory(range: String = "24h") {
+        viewModelScope.launch {
+            val client = api ?: return@launch
+            val points = runCatching { client.history(range) }.getOrNull() ?: return@launch
+            // Minute rollups are empty until the first minute and only cover
+            // the future, so a freshly started agent falls back to raw samples.
+            val selected = if (points.any { it.batteryPct != null }) {
+                points
+            } else {
+                runCatching { client.history("15m") }.getOrNull().orEmpty()
+            }
+            powerHistory = selected
+            powerHistoryAt = if (selected.any { it.batteryPct != null }) {
+                System.currentTimeMillis()
+            } else {
+                0L
+            }
         }
     }
 

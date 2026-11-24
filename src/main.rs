@@ -227,6 +227,7 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
 
 fn build_host_info(hostname: &str) -> HostInfo {
     let sys = System::new_all();
+    let (form_factor, virtualized) = collect::platform::detect();
     HostInfo {
         hostname: hostname.to_string(),
         os: format!(
@@ -246,6 +247,8 @@ fn build_host_info(hostname: &str) -> HostInfo {
             .unwrap_or_default(),
         cores: sys.cpus().len(),
         mem_total: sys.total_memory(),
+        form_factor: form_factor.to_string(),
+        virtualized,
     }
 }
 

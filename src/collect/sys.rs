@@ -131,6 +131,7 @@ impl Sampler {
             net,
             disks,
             temps,
+            power: super::power::read(),
             uptime: System::uptime(),
         }
     }

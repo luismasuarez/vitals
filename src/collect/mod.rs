@@ -1,3 +1,5 @@
+pub mod platform;
+pub mod power;
 pub mod sys;
 
 pub use sys::{ProcRow, ProcSampler, Sampler, Sort};
@@ -14,6 +16,9 @@ pub struct Sample {
     pub net: Net,
     pub disks: Vec<Disk>,
     pub temps: Vec<Temp>,
+    /// Absent on hosts without a readable battery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power: Option<power::Power>,
     pub uptime: u64,
 }
 
@@ -76,6 +81,16 @@ impl Sample {
             net_tx: self.net.tx_bps as i64,
             disk_r: self.disks.iter().map(|d| d.r_bps).sum::<u64>() as i64,
             disk_w: self.disks.iter().map(|d| d.w_bps).sum::<u64>() as i64,
+            battery_pct: self
+                .power
+                .as_ref()
+                .and_then(|power| power.percent)
+                .map(f64::from),
+            power_w: self
+                .power
+                .as_ref()
+                .and_then(|power| power.power_w)
+                .map(f64::from),
         }
     }
 }

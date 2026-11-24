@@ -27,6 +27,11 @@ pub struct Point {
     pub net_tx: i64,
     pub disk_r: i64,
     pub disk_w: i64,
+    /// Absent when the host has no battery or the range predates the column.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_w: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -189,7 +194,9 @@ CREATE TABLE IF NOT EXISTS samples_raw (
     net_rx   INTEGER NOT NULL,
     net_tx   INTEGER NOT NULL,
     disk_r   INTEGER NOT NULL,
-    disk_w   INTEGER NOT NULL
+    disk_w   INTEGER NOT NULL,
+    battery_pct REAL,
+    power_w     REAL
 );
 
 CREATE TABLE IF NOT EXISTS samples_1m (
@@ -199,7 +206,9 @@ CREATE TABLE IF NOT EXISTS samples_1m (
     net_rx   INTEGER NOT NULL,
     net_tx   INTEGER NOT NULL,
     disk_r   INTEGER NOT NULL,
-    disk_w   INTEGER NOT NULL
+    disk_w   INTEGER NOT NULL,
+    battery_pct REAL,
+    power_w     REAL
 );
 "#;
 
@@ -270,6 +279,12 @@ impl Store {
             "TEXT NOT NULL DEFAULT 'reader'",
         )?;
         ensure_column(&conn, "capability_requests", "code", "TEXT")?;
+        // 0.3 adds battery and power to the historical series. Old rows keep
+        // NULL and the client treats it as "no data for this point".
+        ensure_column(&conn, "samples_raw", "battery_pct", "REAL")?;
+        ensure_column(&conn, "samples_raw", "power_w", "REAL")?;
+        ensure_column(&conn, "samples_1m", "battery_pct", "REAL")?;
+        ensure_column(&conn, "samples_1m", "power_w", "REAL")?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -281,9 +296,20 @@ impl Store {
 
     pub fn insert_raw(&self, p: &Point) -> Result<()> {
         self.lock().execute(
-            "INSERT OR REPLACE INTO samples_raw (t, cpu, mem_used, net_rx, net_tx, disk_r, disk_w)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![p.t, p.cpu, p.mem_used, p.net_rx, p.net_tx, p.disk_r, p.disk_w],
+            "INSERT OR REPLACE INTO samples_raw
+                 (t, cpu, mem_used, net_rx, net_tx, disk_r, disk_w, battery_pct, power_w)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                p.t,
+                p.cpu,
+                p.mem_used,
+                p.net_rx,
+                p.net_tx,
+                p.disk_r,
+                p.disk_w,
+                p.battery_pct,
+                p.power_w
+            ],
         )?;
         Ok(())
     }
@@ -292,21 +318,25 @@ impl Store {
     pub fn rollup(&self, now: i64) -> Result<usize> {
         let cutoff = (now / 60) * 60;
         let n = self.lock().execute(
-            "INSERT INTO samples_1m (t, cpu, mem_used, net_rx, net_tx, disk_r, disk_w)
+            "INSERT INTO samples_1m
+                 (t, cpu, mem_used, net_rx, net_tx, disk_r, disk_w, battery_pct, power_w)
              SELECT (t / 60) * 60,
                     AVG(cpu),
                     CAST(AVG(mem_used) AS INTEGER),
                     CAST(AVG(net_rx) AS INTEGER),
                     CAST(AVG(net_tx) AS INTEGER),
                     CAST(AVG(disk_r) AS INTEGER),
-                    CAST(AVG(disk_w) AS INTEGER)
+                    CAST(AVG(disk_w) AS INTEGER),
+                    AVG(battery_pct),
+                    AVG(power_w)
              FROM samples_raw
              WHERE t < ?1
              GROUP BY (t / 60) * 60
              ON CONFLICT(t) DO UPDATE SET
                  cpu = excluded.cpu, mem_used = excluded.mem_used,
                  net_rx = excluded.net_rx, net_tx = excluded.net_tx,
-                 disk_r = excluded.disk_r, disk_w = excluded.disk_w",
+                 disk_r = excluded.disk_r, disk_w = excluded.disk_w,
+                 battery_pct = excluded.battery_pct, power_w = excluded.power_w",
             params![cutoff],
         )?;
         Ok(n)
@@ -364,7 +394,9 @@ impl Store {
                     CAST(AVG(net_rx) AS INTEGER),
                     CAST(AVG(net_tx) AS INTEGER),
                     CAST(AVG(disk_r) AS INTEGER),
-                    CAST(AVG(disk_w) AS INTEGER)
+                    CAST(AVG(disk_w) AS INTEGER),
+                    AVG(battery_pct),
+                    AVG(power_w)
              FROM {table}
              WHERE t >= ?2 AND t <= ?3
              GROUP BY b
@@ -381,6 +413,8 @@ impl Store {
                 net_tx: r.get(4)?,
                 disk_r: r.get(5)?,
                 disk_w: r.get(6)?,
+                battery_pct: r.get(7)?,
+                power_w: r.get(8)?,
             })
         })?;
         let mut out = Vec::new();
@@ -1040,6 +1074,16 @@ mod tests {
             net_tx: 1,
             disk_r: 2,
             disk_w: 3,
+            battery_pct: None,
+            power_w: None,
+        }
+    }
+
+    fn powered_point(t: i64, battery_pct: f64, power_w: f64) -> Point {
+        Point {
+            battery_pct: Some(battery_pct),
+            power_w: Some(power_w),
+            ..point(t, 5.0, 1)
         }
     }
 
@@ -1279,6 +1323,54 @@ mod tests {
         assert_eq!(rows[0].t, base);
         assert!((rows[0].cpu - 20.0).abs() < f64::EPSILON);
         assert_eq!(rows[0].net_rx, 200);
+        assert_eq!(rows[0].battery_pct, None);
+    }
+
+    #[test]
+    fn power_series_survives_the_raw_to_minute_rollup() {
+        let s = Store::in_memory();
+        let base = 1_700_000_040;
+        s.insert_raw(&powered_point(base + 1, 80.0, 7.5)).unwrap();
+        s.insert_raw(&powered_point(base + 2, 60.0, 9.5)).unwrap();
+        s.rollup(base + 60).unwrap();
+
+        let rows = s.query("samples_1m", 0, i64::MAX, 60).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].battery_pct, Some(70.0));
+        assert_eq!(rows[0].power_w, Some(8.5));
+    }
+
+    #[test]
+    fn old_samples_schema_gains_the_power_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE samples_raw (
+                 t INTEGER PRIMARY KEY, cpu REAL NOT NULL, mem_used INTEGER NOT NULL,
+                 net_rx INTEGER NOT NULL, net_tx INTEGER NOT NULL,
+                 disk_r INTEGER NOT NULL, disk_w INTEGER NOT NULL
+             );
+             CREATE TABLE samples_1m (
+                 t INTEGER PRIMARY KEY, cpu REAL NOT NULL, mem_used INTEGER NOT NULL,
+                 net_rx INTEGER NOT NULL, net_tx INTEGER NOT NULL,
+                 disk_r INTEGER NOT NULL, disk_w INTEGER NOT NULL
+             );
+             INSERT INTO samples_raw VALUES (300, 10.0, 1024, 1, 1, 2, 3);",
+        )
+        .unwrap();
+        let s = Store::init(conn).unwrap();
+
+        // The old row is still readable and simply has no power data.
+        let old = s.query("samples_raw", 0, i64::MAX, 10).unwrap();
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].battery_pct, None);
+
+        let base = 1_700_000_040;
+        s.insert_raw(&powered_point(base, 55.0, 6.0)).unwrap();
+        s.rollup(base + 60).unwrap();
+        let rows = s.query("samples_1m", 0, i64::MAX, 60).unwrap();
+        let powered = rows.iter().find(|row| row.t == base).expect("rollup row");
+        assert_eq!(powered.battery_pct, Some(55.0));
+        assert_eq!(powered.power_w, Some(6.0));
     }
 
     #[test]

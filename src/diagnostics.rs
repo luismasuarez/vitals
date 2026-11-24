@@ -340,6 +340,8 @@ mod tests {
             cpu_model: "test".into(),
             cores: 2,
             mem_total: 16 * 1024 * 1024 * 1024,
+            form_factor: "laptop".into(),
+            virtualized: false,
         }
     }
 
@@ -378,6 +380,7 @@ mod tests {
                 label: "Tctl".into(),
                 celsius,
             }],
+            power: None,
             uptime: 100,
         }
     }

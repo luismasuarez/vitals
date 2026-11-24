@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.vitals.app.AppViewModel
 import dev.vitals.app.Series
+import dev.vitals.app.core.Point
+import dev.vitals.app.core.Power
 import dev.vitals.app.core.Proc
 import dev.vitals.app.core.Sample
 import dev.vitals.app.watchdog.WatchStatus
@@ -209,6 +211,10 @@ fun HomeScreen(vm: AppViewModel) {
             )
         }
 
+        sample?.power?.let { power ->
+            EnergyCard(power = power, history = vm.powerHistory)
+        }
+
         VitalsCard {
             CardHeader(
                 "Red",
@@ -275,6 +281,136 @@ fun HomeScreen(vm: AppViewModel) {
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         )
+    }
+}
+
+/* ---------------------------------- energy --------------------------------- */
+
+@Composable
+private fun EnergyCard(power: Power, history: List<Point>) {
+    val color = batteryColor(power)
+    val battery = batterySeries(history)
+
+    VitalsCard {
+        CardHeader(
+            "Energía",
+            trailing = if (power.acOnline) "AC conectada" else "en batería",
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Ring(percent = power.percent ?: 0f, size = 96.dp, color = color)
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Chip(powerStatus(power.status), batteryTone(power))
+                    if (power.acOnline) Chip("AC", ChipTone.Accent)
+                }
+                Text(
+                    powerPrimaryLine(power),
+                    color = Palette.Text,
+                    fontSize = 12.5.sp,
+                )
+                Text(
+                    buildString {
+                        append(Fmt.watts(power.powerW))
+                        power.healthPct?.let { append(" · salud ${Fmt.whole(it)}%") }
+                    },
+                    color = Palette.Muted,
+                    fontSize = 11.5.sp,
+                )
+                power.cycles?.let {
+                    Text("$it ciclos", color = Palette.Dim, fontSize = 10.5.sp)
+                }
+            }
+        }
+
+        if (battery.size >= 2) {
+            Chart(
+                listOf(SeriesData(battery, color)),
+                modifier = Modifier.fillMaxWidth().height(58.dp),
+                capacity = Series.MAX,
+                maxValue = 100f,
+                minValue = 20f,
+            )
+            RowSplit(
+                start = "batería · ${historyLabel(history)}",
+                end = power.batteries.firstOrNull()?.model ?: "—",
+            )
+        }
+
+        if (power.batteries.size > 1) {
+            power.batteries.forEach { item ->
+                RowSplit(
+                    start = item.name,
+                    end = "${item.percent?.let { Fmt.whole(it) + "%" } ?: "—"} · ${powerStatus(item.status)}",
+                )
+            }
+        }
+    }
+}
+
+private fun powerStatus(status: String): String = when (status) {
+    "charging" -> "cargando"
+    "discharging" -> "descargando"
+    "full" -> "completa"
+    "not_charging" -> "en pausa"
+    else -> "sin datos"
+}
+
+private fun powerPrimaryLine(power: Power): String = when {
+    power.status == "charging" && (power.percent ?: 0f) >= 99.5f -> "batería completa"
+    power.status == "charging" && power.secondsToFull != null && power.secondsToFull > 0 ->
+        "${Fmt.duration(power.secondsToFull)} para 100 %"
+    power.status == "charging" -> "cargando"
+    power.status == "discharging" && power.secondsLeft != null ->
+        "${Fmt.duration(power.secondsLeft)} restantes"
+    power.status == "full" -> "batería completa"
+    power.status == "not_charging" -> "conectada, sin cargar"
+    else -> "—"
+}
+
+private fun batteryColor(power: Power): Color {
+    val percent = power.percent ?: 100f
+    return when {
+        power.status == "charging" -> Palette.Accent
+        percent <= 10f -> Palette.Danger
+        percent <= 25f -> Palette.Warn
+        else -> Palette.Rx
+    }
+}
+
+private fun batteryTone(power: Power): ChipTone {
+    val percent = power.percent ?: 100f
+    return when {
+        power.status == "charging" -> ChipTone.Accent
+        percent <= 10f -> ChipTone.Hot
+        percent <= 25f -> ChipTone.Warm
+        else -> ChipTone.Neutral
+    }
+}
+
+/** A 24 h series has one point per minute; the chart only needs 60. */
+private fun batterySeries(points: List<Point>): List<Float> {
+    val values = points.mapNotNull { it.batteryPct }
+    if (values.size <= Series.MAX) return values
+    val step = values.size / Series.MAX.toFloat()
+    return (0 until Series.MAX).map { index ->
+        val from = (index * step).toInt().coerceAtMost(values.lastIndex)
+        val to = ((index + 1) * step).toInt().coerceIn(from + 1, values.size)
+        values.subList(from, to).average().toFloat()
+    }
+}
+
+private fun historyLabel(points: List<Point>): String {
+    if (points.size < 2) return "en vivo"
+    val span = points.last().t - points.first().t
+    return when {
+        span >= 20 * 3600 -> "24 h"
+        span >= 50 * 60 -> "1 h"
+        span >= 10 * 60 -> "15 min"
+        else -> "en vivo"
     }
 }
 

@@ -37,6 +37,37 @@ data class Disk(
 
 data class Temp(val label: String, val celsius: Float)
 
+data class Battery(
+    val name: String,
+    val present: Boolean,
+    val status: String,
+    val percent: Float?,
+    val powerW: Float?,
+    val energyNowWh: Float?,
+    val energyFullWh: Float?,
+    val energyFullDesignWh: Float?,
+    val voltageV: Float?,
+    val secondsLeft: Long?,
+    val secondsToFull: Long?,
+    val healthPct: Float?,
+    val cycles: Int?,
+    val technology: String?,
+    val model: String?,
+)
+
+data class Power(
+    val acOnline: Boolean,
+    val onBattery: Boolean,
+    val percent: Float?,
+    val status: String,
+    val powerW: Float?,
+    val secondsLeft: Long?,
+    val secondsToFull: Long?,
+    val healthPct: Float?,
+    val cycles: Int?,
+    val batteries: List<Battery>,
+)
+
 data class Sample(
     val t: Long,
     val cpu: Cpu,
@@ -45,6 +76,7 @@ data class Sample(
     val disks: List<Disk>,
     val temps: List<Temp>,
     val uptime: Long,
+    val power: Power? = null,
 )
 
 data class Point(
@@ -53,6 +85,8 @@ data class Point(
     val mem: Long,
     val netRx: Long,
     val netTx: Long,
+    val batteryPct: Float? = null,
+    val powerW: Float? = null,
 )
 
 data class Proc(val pid: Int, val name: String, val cpu: Float, val mem: Long)
@@ -65,6 +99,8 @@ data class HostInfo(
     val cpuModel: String,
     val cores: Int,
     val memTotal: Long,
+    val formFactor: String = "unknown",
+    val virtualized: Boolean = false,
 )
 
 data class DeviceInfo(val id: String, val name: String, val lastSeenAt: Long?)
@@ -225,6 +261,38 @@ object Wire {
                 Temp(t.optString("label"), t.optDouble("celsius").toFloat())
             },
             uptime = o.optLong("uptime"),
+            power = o.optJSONObject("power")?.let { p ->
+                Power(
+                    acOnline = p.optBoolean("ac_online"),
+                    onBattery = p.optBoolean("on_battery"),
+                    percent = p.floatOrNull("percent"),
+                    status = p.optString("status", "unknown"),
+                    powerW = p.floatOrNull("power_w"),
+                    secondsLeft = p.longOrNull("seconds_left"),
+                    secondsToFull = p.longOrNull("seconds_to_full"),
+                    healthPct = p.floatOrNull("health_pct"),
+                    cycles = p.intOrNull("cycles"),
+                    batteries = p.optJSONArray("batteries").objects { b ->
+                        Battery(
+                            name = b.optString("name"),
+                            present = b.optBoolean("present", true),
+                            status = b.optString("status", "unknown"),
+                            percent = b.floatOrNull("percent"),
+                            powerW = b.floatOrNull("power_w"),
+                            energyNowWh = b.floatOrNull("energy_now_wh"),
+                            energyFullWh = b.floatOrNull("energy_full_wh"),
+                            energyFullDesignWh = b.floatOrNull("energy_full_design_wh"),
+                            voltageV = b.floatOrNull("voltage_v"),
+                            secondsLeft = b.longOrNull("seconds_left"),
+                            secondsToFull = b.longOrNull("seconds_to_full"),
+                            healthPct = b.floatOrNull("health_pct"),
+                            cycles = b.intOrNull("cycles"),
+                            technology = b.stringOrNull("technology"),
+                            model = b.stringOrNull("model"),
+                        )
+                    },
+                )
+            },
         )
     }
 
@@ -236,6 +304,8 @@ object Wire {
                 mem = p.optLong("mem"),
                 netRx = p.optLong("net_rx"),
                 netTx = p.optLong("net_tx"),
+                batteryPct = p.floatOrNull("battery_pct"),
+                powerW = p.floatOrNull("power_w"),
             )
         }
 
@@ -259,6 +329,8 @@ object Wire {
             cpuModel = o.optString("cpu_model"),
             cores = o.optInt("cores"),
             memTotal = o.optLong("mem_total"),
+            formFactor = o.optString("form_factor", "unknown"),
+            virtualized = o.optBoolean("virtualized"),
         )
     }
 
@@ -441,6 +513,11 @@ private fun JSONArray?.asFloatList(): List<Float> {
 
 private fun JSONObject.doubleOrNull(key: String): Double? =
     if (has(key) && !isNull(key)) getDouble(key) else null
+
+private fun JSONObject.floatOrNull(key: String): Float? = doubleOrNull(key)?.toFloat()
+
+private fun JSONObject.intOrNull(key: String): Int? =
+    if (has(key) && !isNull(key)) getInt(key) else null
 
 private fun JSONObject.longOrNull(key: String): Long? =
     if (has(key) && !isNull(key)) getLong(key) else null
