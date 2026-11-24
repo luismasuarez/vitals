@@ -5,7 +5,13 @@ El contenido se genera con [git-cliff](https://git-cliff.org) a partir de los
 commits convencionales; no lo edites a mano. Para publicar una versión y
 regenerar este archivo, ejecuta `./scripts/release.sh X.Y.Z`.
 
-## [0.1.0](https://github.com/luismasuarez/vitals/releases/tag/v0.1.0) - 2026-11-24
+## [0.1.0](https://github.com/TU_USUARIO/vitals/compare/v0.1.0...v0.1.0) - 2026-11-24
+
+### Corregido
+
+- **build**: ship only arm64-v8a and use the runner Android SDK
+
+## [0.1.0](https://github.com/TU_USUARIO/vitals/releases/tag/v0.1.0) - 2026-11-24
 
 ### Añadido
 
