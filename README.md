@@ -179,6 +179,11 @@ de código y revocación. La app se probó en un Galaxy A54 contra el agente rea
 Hecho y probado: servidor (fases 1–3), app Android, mockup web y pipeline de
 release con changelog generado por conventional commits.
 
+## Probar en el móvil
+
+Guía paso a paso (servicio, QR, verificación y actualización) en
+[`docs/TESTING.md`](docs/TESTING.md).
+
 ## Instalación desde GitHub Releases
 
 Cada etiqueta `v*` publica los binarios del servidor y el APK en la página de
