@@ -47,12 +47,12 @@ class SessionStore(context: Context) {
 
         val session = runCatching {
             Session(
-                name = o.optString("name").ifBlank { "host" },
+                name = o.optString("name").takeIf { it.isNotBlank() && it != "null" } ?: "host",
                 pin = o.optString("pin"),
                 endpoints = o.optJSONArray("endpoints").toStringList(),
                 token = token,
                 deviceId = o.optString("device_id"),
-                scope = o.optString("scope").ifBlank { "reader" },
+                scope = o.optString("scope").takeIf { it.isNotBlank() && it != "null" } ?: "reader",
                 pairedAt = o.optLong("paired_at"),
             )
         }.getOrNull()

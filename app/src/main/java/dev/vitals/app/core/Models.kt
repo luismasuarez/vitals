@@ -106,7 +106,9 @@ data class AlertRule(
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("kind", kind)
-        mount?.let { put("mount", it) }
+        // A null from the wire used to become the literal "null" string; only
+        // absolute paths are ever valid, so drop anything else.
+        mount?.takeIf { it.startsWith("/") }?.let { put("mount", it) }
         percent?.let { put("percent", it) }
         days?.let { put("days", it) }
         celsius?.let { put("celsius", it) }
@@ -282,7 +284,7 @@ object Wire {
         return PairResult(
             token = o.getString("token"),
             deviceId = o.getString("device_id"),
-            scope = o.optString("scope").ifBlank { "reader" },
+            scope = o.stringOrNull("scope") ?: "reader",
         )
     }
 
@@ -293,7 +295,7 @@ object Wire {
                 AlertRule(
                     id = r.getString("id"),
                     kind = r.optString("kind"),
-                    mount = r.optString("mount").ifBlank { null },
+                    mount = r.stringOrNull("mount"),
                     percent = r.doubleOrNull("percent"),
                     days = r.doubleOrNull("days"),
                     celsius = r.doubleOrNull("celsius"),
@@ -309,7 +311,7 @@ object Wire {
                     kind = e.optString("kind"),
                     at = e.optLong("at"),
                     state = e.optString("state"),
-                    detail = e.optString("detail").ifBlank { null },
+                    detail = e.stringOrNull("detail"),
                 )
             },
             predictions = o.optJSONArray("predictions").objects { p ->
@@ -328,7 +330,7 @@ object Wire {
                 val request = c.optJSONObject("request")?.let {
                     CapRequestInfo(
                         id = it.optLong("id"),
-                        code = it.optString("code").ifBlank { null },
+                        code = it.stringOrNull("code"),
                         expiresAt = it.optLong("expires_at"),
                     )
                 }
@@ -337,7 +339,7 @@ object Wire {
                     risk = c.optString("risk"),
                     approvable = c.optBoolean("approvable"),
                     state = c.optString("state"),
-                    grantedBy = c.optString("granted_by").ifBlank { null },
+                    grantedBy = c.stringOrNull("granted_by"),
                     params = c.optJSONObject("params"),
                     request = request,
                 )
@@ -354,7 +356,7 @@ object Wire {
                     severity = f.optString("severity"),
                     title = f.optString("title"),
                     detail = f.optString("detail"),
-                    suggestion = f.optString("suggestion").ifBlank { null },
+                    suggestion = f.stringOrNull("suggestion"),
                 )
             },
             suggestions = o.optJSONArray("suggestions").objects { s ->
@@ -384,9 +386,7 @@ object Wire {
         val o = JSONObject(text)
         when (val error = o.opt("error")) {
             is String -> error.ifBlank { null }
-            is JSONObject -> error.optString("detail")
-                .ifBlank { error.optString("code") }
-                .ifBlank { null }
+            is JSONObject -> error.stringOrNull("detail") ?: error.stringOrNull("code")
             else -> null
         }
     }.getOrNull()
@@ -411,11 +411,11 @@ object Wire {
         return PairingPayload(
             version = version,
             name = o.optString("name"),
-            device = o.optString("dev").ifBlank { null },
+            device = o.stringOrNull("dev"),
             endpoints = endpoints,
             pin = pin,
             code = code,
-            scope = o.optString("scope").ifBlank { "reader" },
+            scope = o.stringOrNull("scope") ?: "reader",
             expiresAt = o.optLong("exp"),
         )
     }
@@ -444,3 +444,6 @@ private fun JSONObject.doubleOrNull(key: String): Double? =
 
 private fun JSONObject.longOrNull(key: String): Long? =
     if (has(key) && !isNull(key)) getLong(key) else null
+
+private fun JSONObject.stringOrNull(key: String): String? =
+    if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
