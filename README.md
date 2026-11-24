@@ -33,6 +33,21 @@ Consecuencias prácticas:
 - Comprometer un nodo del tailnet no da acceso: hace falta además un token.
 - En un VPS el puerto no existe en la interfaz pública, sólo en `tailscale0`.
 
+## Instalación en una línea
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/luismasuarez/vitals/main/scripts/install.sh | sh
+vitals pair --name "mi-telefono"
+```
+
+Sin `sudo` instala en `~/.local/bin` y registra un servicio de usuario; con
+`sudo` instala en `/usr/local/bin` y usa el servicio del sistema.
+
+El mismo comando es el actualizador: si ya estás en la última versión es un
+no-op, si hay una nueva reemplaza el binario y reinicia el servicio sin tocar
+configuración ni datos. Para no recordar la URL queda instalado
+`vitals-update` (acepta `--check`, `--version X.Y.Z`, `--force`).
+
 ## Compilar
 
 ```bash

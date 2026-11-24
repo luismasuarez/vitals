@@ -89,19 +89,20 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let paths = Paths::resolve(cli.state_dir.as_deref())?;
+    let sockets = Paths::control_candidates(cli.state_dir.as_deref());
 
     match cli.cmd {
         Cmd::Serve => {
             let cfg = Config::load(&cli.config)?;
             serve(cfg, paths).await
         }
-        Cmd::Pair { name, ttl } => cli::pair(&paths.control_sock, name.as_deref(), ttl),
+        Cmd::Pair { name, ttl } => cli::pair(&sockets, name.as_deref(), ttl),
         Cmd::Devices { cmd } => match cmd {
-            DevicesCmd::List => cli::devices(&paths.control_sock),
-            DevicesCmd::Revoke { id } => cli::revoke(&paths.control_sock, &id),
+            DevicesCmd::List => cli::devices(&sockets),
+            DevicesCmd::Revoke { id } => cli::revoke(&sockets, &id),
         },
         Cmd::Tls { cmd } => match cmd {
-            TlsCmd::Show => cli::info(&paths.control_sock),
+            TlsCmd::Show => cli::info(&sockets),
         },
     }
 }

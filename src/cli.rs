@@ -1,11 +1,11 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 use qrcode::render::unicode::Dense1x2;
 use qrcode::QrCode;
 use serde_json::{json, Value};
 
-use crate::control::request;
+use crate::control::request_any;
 use crate::store::now_ts;
 
 fn ok_or_error(reply: &Value) -> Result<()> {
@@ -21,12 +21,12 @@ fn ok_or_error(reply: &Value) -> Result<()> {
     )
 }
 
-pub fn pair(sock: &Path, name: Option<&str>, ttl: u64) -> Result<()> {
+pub fn pair(sockets: &[PathBuf], name: Option<&str>, ttl: u64) -> Result<()> {
     let mut req = json!({ "cmd": "pair", "ttl": ttl });
     if let Some(n) = name {
         req["name"] = json!(n);
     }
-    let reply = request(sock, &req)?;
+    let reply = request_any(sockets, &req)?;
     ok_or_error(&reply)?;
 
     let payload = &reply["payload"];
@@ -71,8 +71,8 @@ pub fn pair(sock: &Path, name: Option<&str>, ttl: u64) -> Result<()> {
     Ok(())
 }
 
-pub fn devices(sock: &Path) -> Result<()> {
-    let reply = request(sock, &json!({ "cmd": "devices" }))?;
+pub fn devices(sockets: &[PathBuf]) -> Result<()> {
+    let reply = request_any(sockets, &json!({ "cmd": "devices" }))?;
     ok_or_error(&reply)?;
     let empty = Vec::new();
     let list = reply["devices"].as_array().unwrap_or(&empty);
@@ -96,8 +96,8 @@ pub fn devices(sock: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn revoke(sock: &Path, id: &str) -> Result<()> {
-    let reply = request(sock, &json!({ "cmd": "revoke", "id": id }))?;
+pub fn revoke(sockets: &[PathBuf], id: &str) -> Result<()> {
+    let reply = request_any(sockets, &json!({ "cmd": "revoke", "id": id }))?;
     ok_or_error(&reply)?;
     if reply["removed"].as_bool() == Some(true) {
         println!("device {id} revoked");
@@ -107,8 +107,8 @@ pub fn revoke(sock: &Path, id: &str) -> Result<()> {
     }
 }
 
-pub fn info(sock: &Path) -> Result<()> {
-    let reply = request(sock, &json!({ "cmd": "info" }))?;
+pub fn info(sockets: &[PathBuf]) -> Result<()> {
+    let reply = request_any(sockets, &json!({ "cmd": "info" }))?;
     ok_or_error(&reply)?;
     println!("name       {}", reply["name"].as_str().unwrap_or("?"));
     println!("version    {}", reply["version"].as_str().unwrap_or("?"));

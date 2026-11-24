@@ -3,49 +3,32 @@
 Estado: app de producción `0.1.0` instalada en el Galaxy A54 (release, firmada,
 sólo `arm64-v8a`). Falta levantar el agente y emparejar.
 
-## 1. Levantar el agente
-
-### Opción A — servicio systemd (recomendado)
+## 1. Instalar y arrancar el agente
 
 ```bash
-cd ~/tools/vitals
-curl -LO https://github.com/luismasuarez/vitals/releases/download/v0.1.0/vitals-0.1.0-x86_64-unknown-linux-musl.tar.gz
-tar xzf vitals-0.1.0-x86_64-unknown-linux-musl.tar.gz
-
-sudo install -m 0755 vitals-0.1.0-x86_64-unknown-linux-musl/vitals /usr/local/bin/vitals
-sudo install -d /etc/vitals
-sudo install -m 0644 vitals-0.1.0-x86_64-unknown-linux-musl/config.toml.example /etc/vitals/config.toml
-sudo install -m 0644 vitals-0.1.0-x86_64-unknown-linux-musl/vitals.service /etc/systemd/system/vitals.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now vitals
-journalctl -u vitals -n 20
+curl -fsSL https://raw.githubusercontent.com/luismasuarez/vitals/main/scripts/install.sh | sh
 ```
 
-Comprueba en el log los endpoints en los que escucha: deben ser las IPs de LAN,
-la de `tailscale0` y loopback. Nunca `0.0.0.0`.
+Eso descarga el binario correcto para la arquitectura, verifica el checksum,
+lo instala en `~/.local/bin`, registra el servicio de usuario y lo arranca.
+Con `sudo` delante hace lo mismo a nivel de sistema (`/usr/local/bin` +
+`/etc/vitals` + unidad systemd).
 
-### Opción B — sin sudo, prueba rápida
+Comprobar estado:
 
 ```bash
-cd ~/tools/vitals
-cargo build --release
-STATE=~/.local/state/vitals
-mkdir -p "$STATE"
-./target/release/vitals --state-dir "$STATE" serve
+systemctl --user status vitals      # instalación de usuario
+journalctl --user -u vitals -n 20
 ```
-
-Deja esa terminal abierta. En otra, los comandos de administración llevan el
-mismo `--state-dir`.
 
 ## 2. Emparejar con el QR
 
 ```bash
-sudo vitals pair --name "Galaxy A54"          # opción A
-./target/release/vitals --state-dir "$STATE" pair --name "Galaxy A54"   # opción B
+vitals pair --name "mi-telefono"
 ```
 
-Imprime un QR en la terminal y, debajo, la misma carga en texto
-(`vitals1:…`). El código es de un solo uso y caduca en 5 minutos.
+Imprime un QR en la terminal y, debajo, la misma carga en texto (`vitals1:…`).
+El código es de un solo uso y caduca en 5 minutos.
 
 En el móvil:
 
@@ -88,10 +71,17 @@ sudo rm /var/lib/vitals/tls-cert.pem /var/lib/vitals/tls-key.pem
 sudo systemctl start vitals
 ```
 
-## 5. Actualizar la app
+## 5. Actualizar
 
-Descarga `vitals-<version>-android.apk` de la página de releases e instálala
-encima (misma clave de firma, los datos se conservan):
+Agente (un comando, sin recordar URLs):
+
+```bash
+vitals-update              # o: sudo vitals-update
+vitals-update --check      # sólo compara versiones
+```
+
+App: descarga `vitals-<version>-android.apk` de la página de releases e
+instálala encima (misma clave de firma, los datos se conservan):
 
 ```bash
 adb install -r vitals-0.1.0-android.apk

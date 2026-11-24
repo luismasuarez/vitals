@@ -1,7 +1,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde_json::{json, Value};
@@ -138,4 +138,34 @@ pub fn request(sock: &Path, req: &Value) -> Result<Value> {
     let mut line = String::new();
     SyncReader::new(stream).read_line(&mut line)?;
     serde_json::from_str(&line).context("malformed reply from vitals service")
+}
+
+/// Tries every known control socket. Used by the CLI so `vitals pair` works
+/// from any directory without flags.
+pub fn request_any(candidates: &[std::path::PathBuf], req: &Value) -> Result<Value> {
+    let mut tried: Vec<String> = Vec::new();
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+        match request(path, req) {
+            Ok(reply) => return Ok(reply),
+            Err(e) => tried.push(format!("{} ({e})", path.display())),
+        }
+    }
+
+    if tried.is_empty() {
+        bail!(
+            "no encuentro el agente en ejecución.\n  Arranca el servicio con `systemctl --user start vitals`\n  o en primer plano con `vitals serve`.\n  Rutas buscadas: {}",
+            candidates
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    bail!(
+        "el agente no responde en ningún socket conocido:\n  {}",
+        tried.join("\n  ")
+    );
 }

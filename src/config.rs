@@ -73,20 +73,7 @@ pub struct Paths {
 
 impl Paths {
     pub fn resolve(state_dir: Option<&Path>) -> Result<Self> {
-        // Dev runs pass --state-dir and keep everything in one place. Under
-        // systemd, STATE_DIRECTORY and RUNTIME_DIRECTORY are separate, so the
-        // control socket lives on tmpfs and is owned by the dynamic user.
-        let (state_dir, runtime_dir) = match state_dir {
-            Some(p) => (p.to_path_buf(), p.to_path_buf()),
-            None => (
-                std::env::var_os("STATE_DIRECTORY")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/var/lib/vitals")),
-                std::env::var_os("RUNTIME_DIRECTORY")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/run/vitals")),
-            ),
-        };
+        let (state_dir, runtime_dir) = Self::dirs(state_dir)?;
         fs::create_dir_all(&state_dir)
             .with_context(|| format!("cannot create state dir {}", state_dir.display()))?;
         // The CLI only needs to read this path; the service creates it.
@@ -99,5 +86,64 @@ impl Paths {
             control_sock: runtime_dir.join("control.sock"),
             state_dir,
         })
+    }
+
+    /// Explicit flag > systemd directories > system layout when writable >
+    /// per-user XDG directories. The last case is what lets `vitals serve`
+    /// run without root.
+    fn dirs(explicit: Option<&Path>) -> Result<(PathBuf, PathBuf)> {
+        if let Some(path) = explicit {
+            return Ok((path.to_path_buf(), path.to_path_buf()));
+        }
+
+        if let Some(state) = std::env::var_os("STATE_DIRECTORY") {
+            let state = PathBuf::from(state);
+            let runtime = std::env::var_os("RUNTIME_DIRECTORY")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| state.clone());
+            return Ok((state, runtime));
+        }
+
+        let system_state = PathBuf::from("/var/lib/vitals");
+        if fs::create_dir_all(&system_state).is_ok() {
+            let system_runtime = PathBuf::from("/run/vitals");
+            fs::create_dir_all(&system_runtime).ok();
+            return Ok((system_state, system_runtime));
+        }
+
+        let fallback = xdg_state_dir();
+        Ok((fallback.clone(), fallback))
+    }
+
+    /// Where the CLI looks for the control socket, in priority order. This is
+    /// what makes `vitals pair` work from any directory in every deployment
+    /// shape (system service, user service, ad-hoc user process).
+    pub fn control_candidates(explicit: Option<&Path>) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+
+        if let Some(path) = explicit {
+            out.push(path.join("control.sock"));
+        }
+        if let Some(runtime) = std::env::var_os("RUNTIME_DIRECTORY") {
+            out.push(PathBuf::from(runtime).join("control.sock"));
+        }
+        out.push(PathBuf::from("/run/vitals/control.sock"));
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+            out.push(PathBuf::from(runtime).join("vitals/control.sock"));
+        }
+        out.push(xdg_state_dir().join("control.sock"));
+
+        out.dedup();
+        out
+    }
+}
+
+fn xdg_state_dir() -> PathBuf {
+    if let Some(base) = std::env::var_os("XDG_STATE_HOME") {
+        return PathBuf::from(base).join("vitals");
+    }
+    match std::env::var_os("HOME") {
+        Some(home) => PathBuf::from(home).join(".local/state/vitals"),
+        None => PathBuf::from(".vitals"),
     }
 }
