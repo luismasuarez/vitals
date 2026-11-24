@@ -290,6 +290,11 @@ fun HomeScreen(vm: AppViewModel) {
 private fun EnergyCard(power: Power, history: List<Point>) {
     val color = batteryColor(power)
     val battery = batterySeries(history)
+    val showChart = battery.size >= 3 && battery.distinct().size > 1
+    val details = buildList {
+        power.powerW?.let { add(Fmt.watts(it)) }
+        power.healthPct?.let { add("salud ${Fmt.whole(it)}%") }
+    }.joinToString(" · ")
 
     VitalsCard {
         CardHeader(
@@ -312,21 +317,20 @@ private fun EnergyCard(power: Power, history: List<Point>) {
                     color = Palette.Text,
                     fontSize = 12.5.sp,
                 )
-                Text(
-                    buildString {
-                        append(Fmt.watts(power.powerW))
-                        power.healthPct?.let { append(" · salud ${Fmt.whole(it)}%") }
-                    },
-                    color = Palette.Muted,
-                    fontSize = 11.5.sp,
-                )
+                if (details.isNotEmpty()) {
+                    Text(
+                        details,
+                        color = Palette.Muted,
+                        fontSize = 11.5.sp,
+                    )
+                }
                 power.cycles?.let {
                     Text("$it ciclos", color = Palette.Dim, fontSize = 10.5.sp)
                 }
             }
         }
 
-        if (battery.size >= 2) {
+        if (showChart) {
             Chart(
                 listOf(SeriesData(battery, color)),
                 modifier = Modifier.fillMaxWidth().height(58.dp),
@@ -338,6 +342,12 @@ private fun EnergyCard(power: Power, history: List<Point>) {
                 start = "batería · ${historyLabel(history)}",
                 end = power.batteries.firstOrNull()?.model ?: "—",
             )
+        } else {
+            val batteryName = power.batteries.firstOrNull()?.name ?: "batería"
+            val model = power.batteries.firstOrNull()?.model
+            if (!model.isNullOrBlank()) {
+                RowSplit(start = batteryName, end = model)
+            }
         }
 
         if (power.batteries.size > 1) {
@@ -404,8 +414,9 @@ private fun batterySeries(points: List<Point>): List<Float> {
 }
 
 private fun historyLabel(points: List<Point>): String {
-    if (points.size < 2) return "en vivo"
-    val span = points.last().t - points.first().t
+    val powered = points.filter { it.batteryPct != null }
+    if (powered.size < 2) return "en vivo"
+    val span = powered.last().t - powered.first().t
     return when {
         span >= 20 * 3600 -> "24 h"
         span >= 50 * 60 -> "1 h"
