@@ -36,7 +36,7 @@ Consecuencias prácticas:
 ## Instalación en una línea
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/luismasuarez/vitals/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/luismasuarez/vitals/main/scripts/install.sh | bash
 vitals pair --name "mi-telefono"
 ```
 

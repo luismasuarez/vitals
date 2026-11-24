@@ -17,6 +17,11 @@
 #   -h, --help
 set -euo pipefail
 
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "error: ejecuta este script con bash (curl ... | bash)" >&2
+  exit 1
+fi
+
 REPO="${VITALS_REPO:-luismasuarez/vitals}"
 RAW="https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh"
 
@@ -114,7 +119,9 @@ else
   curl -fsSL --retry 3 --retry-delay 2 "${BASE}/${NAME}.tar.gz" -o "${TMP}/${NAME}.tar.gz"
   curl -fsSL --retry 3 --retry-delay 2 "${BASE}/SHA256SUMS" -o "${TMP}/SHA256SUMS"
 
-  ( cd "${TMP}" && grep -E "[ *]${NAME}\.tar\.gz$" SHA256SUMS | sha256sum -c - >/dev/null ) \
+  # SHA256SUMS may list "./name" or "name"; normalise before checking.
+  ( cd "${TMP}" && awk -v f="${NAME}.tar.gz" '$2 == f || $2 == "./" f { print $1 "  " f }' SHA256SUMS \
+      | sha256sum -c - >/dev/null ) \
     || die "la suma de verificación no coincide"
 
   tar xzf "${TMP}/${NAME}.tar.gz" -C "${TMP}"
@@ -141,7 +148,10 @@ WRAPPER="$(dirname "${BIN}")/vitals-update"
 cat > "${WRAPPER}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec curl -fsSL ${RAW} | sh -s -- "\$@"
+tmp="\$(mktemp)"
+trap 'rm -f "\${tmp}"' EXIT
+curl -fsSL ${RAW} -o "\${tmp}"
+exec bash "\${tmp}" "\$@"
 EOF
 chmod 0755 "${WRAPPER}"
 
@@ -164,16 +174,12 @@ ExecStart=%h/.local/bin/vitals serve
 Environment=RUST_LOG=vitals=info
 Restart=on-failure
 RestartSec=3
+# User managers cannot drop capabilities, so the sandboxing directives from
+# the system unit stay out of this one.
 StateDirectory=vitals
 RuntimeDirectory=vitals
 RuntimeDirectoryMode=0700
 UMask=0077
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
 
 [Install]
 WantedBy=default.target

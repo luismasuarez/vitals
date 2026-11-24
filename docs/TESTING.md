@@ -6,7 +6,7 @@ sólo `arm64-v8a`). Falta levantar el agente y emparejar.
 ## 1. Instalar y arrancar el agente
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/luismasuarez/vitals/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/luismasuarez/vitals/main/scripts/install.sh | bash
 ```
 
 Eso descarga el binario correcto para la arquitectura, verifica el checksum,
