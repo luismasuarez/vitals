@@ -5,6 +5,24 @@ El contenido lo genera [release-please](https://github.com/googleapis/release-pl
 a partir de los commits convencionales; no lo edites a mano. La versión y el
 tag los publica el workflow `Release` al fusionar el PR `chore(release)`.
 
+## [0.3.2](https://github.com/luismasuarez/vitals/compare/v0.3.1...v0.3.2) (2026-11-25)
+
+
+### Añadido
+
+* add SSH access monitoring and topic-based app UI ([653fd9c](https://github.com/luismasuarez/vitals/commit/653fd9cc3d95a216ac73889c9fe5bd73bf3df022))
+
+
+### Documentación
+
+* record the v0.3.1 release and device test ([caad4a6](https://github.com/luismasuarez/vitals/commit/caad4a6c6821ce35e70bba561e8b51c3a2ec6a66))
+
+
+### Build y CI
+
+* raise Android version codes above local test builds ([8b0cd5f](https://github.com/luismasuarez/vitals/commit/8b0cd5fbcac59d626a77ef2babbb26a9446bb66e))
+* use the preinstalled Android SDK ([fb092a5](https://github.com/luismasuarez/vitals/commit/fb092a5f41566b37e076432293c4b6f60f087ec0))
+
 ## [0.3.1](https://github.com/luismasuarez/vitals/compare/v0.3.0...v0.3.1) - 2026-11-24
 
 ### Corregido
