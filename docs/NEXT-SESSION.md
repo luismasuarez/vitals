@@ -1,4 +1,4 @@
-# Prompt para continuar — vitals 0.3.2 «accesos»
+# Prompt para continuar — vitals 0.3.3 (0.3.2 «accesos»)
 
 > Copia este archivo completo como primer mensaje de la nueva sesión.
 
@@ -53,18 +53,18 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 
 | Cosa | Valor |
 |---|---|
-| Rama / tag | tag publicado **`v0.3.2`**; `main` en el merge de release-please (`e00889b`) |
-| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.2 (CI y Release en verde) |
-| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.2-android.apk` (versionCode 305) |
-| Servidor local | `systemctl --user vitals`, 0.3.2 local (binario gnu), activo, **1 dispositivo**: `Samsung A54` (operator, `5d69f2ec453a`) |
-| Binario instalado | compilado en local (`cargo build --release`) para `x86_64-unknown-linux-gnu`; el release oficial sigue siendo musl |
+| Rama / tag | tag publicado **`v0.3.3`**; `main` en el merge de release-please (`c8f56d2`) |
+| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.3 (CI y Release en verde) |
+| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.3-android.apk` (versionCode 306) |
+| Servidor local | `systemctl --user vitals`, 0.3.3 (musl oficial), activo; **1 dispositivo**: `Samsung A54` (operator, `5d69f2ec453a`) |
+| Binario instalado | musl 0.3.3 instalado con la CLI sobre el servicio de usuario |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` en uso, `0700`; reglas `disk-root` y `memory`; `disk-root` disparada |
 | Pin actual | `DfQbSeKgP4seLPKq20l_2g` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
-| App instalada | `dev.vitals.app` 0.3.2 (versionCode **305**) con la UI por temas y la pasada de claridad, instalada encima de la build de pruebas sin perder datos. El código del release usa el mismo 305. |
+| App instalada | `dev.vitals.app` 0.3.3 (versionCode **306**) con la UI por temas y la pasada de claridad, instalada encima de la build de pruebas sin perder datos. |
 | App, estado UI | Emparejada como **operator** (`Samsung A54`, id `5d69f2ec453a`); los tokens reader y operator antiguos se revocaron. Watchdog **apagado**. |
-| Entrega en curso | 0.3.2 «accesos» + UI por temas + pasada de claridad, publicada e instalada. La siguiente entrega parte de `main` en `e00889b`. |
+| Entrega en curso | 0.3.2 «accesos» + UI por temas + pasada de claridad, publicada; 0.3.3 es sólo documentación. La siguiente entrega parte de `main` en `c8f56d2`. |
 | Dispositivo de pruebas | Galaxy A54, Android 16 (API 37), por adb en `192.168.1.101:35213` |
 | Firma APK | `~/keystores/vitals-release.jks` + `.properties` (0600); secrets en GitHub |
 
@@ -172,7 +172,7 @@ todos los campos opcionales, se filtra el mount al serializar y se publicó
 baja (sólo descargando, con histéresis y recuperación al conectar AC),
 diagnósticos de batería desgastada y detección de suspensión/reanudación.
 
-## Implementado en 0.3.2 (en preparación)
+## Implementado en 0.3.2 (publicado)
 
 ### Accesos SSH
 
@@ -382,8 +382,8 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
 3. Si toca cerrar pruebas: temperatura en 0.2.1, descarga de energía en 0.3.1,
    accesos en 0.3.2, auditoría y WorkManager; anotar el resultado en este
    archivo.
-4. 0.3.2 está implementada pero **no publicada**. Falta probarla en el host
-   real y en el VPS, y preguntar antes de commit, tag y release.
+4. 0.3.2 y 0.3.3 están publicadas. Falta la validación con tráfico real en el
+   VPS y, si aparece un cambio, abrir la siguiente entrega.
 5. Si se toca código: `cargo test`, `clippy`, `fmt`, `smoke.sh` y
    `assembleDebug` antes de release; después push a `main`: release-please abre
    el PR de release y, al fusionarlo, CI publica binarios y APK.
@@ -484,7 +484,7 @@ cd app
 set -a; source ~/keystores/vitals-release.properties; set +a
 JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
   ~/.local/share/gradle-8.11.1/bin/gradle assembleRelease \
-  -PvitalsVersionName=0.3.2 -PvitalsVersionCode=302 \
+  -PvitalsVersionName=0.3.3 -PvitalsVersionCode=306 \
   -PvitalsKeystore="$storeFile" -PvitalsKeystorePassword="$storePassword" \
   -PvitalsKeyAlias="$keyAlias" -PvitalsKeyPassword="$keyPassword"
 ```
@@ -565,12 +565,11 @@ checksums.
 
 Cumplidos en **0.3.1** salvo la prueba dinámica de descarga (desenchufar y
 comprobar tiempo restante/consumo) y la ausencia visual en un VPS. En **0.3.2**
-falta la validación con tráfico real y la instalación en el VPS.
+queda pendiente la validación con tráfico real y la instalación en el VPS.
 
 ## Próximos pasos
 
-1. **Cerrar 0.3.2**: smoke completo, prueba en el host real y en el VPS, y
-   release si el usuario lo pide.
+1. **Validar 0.3.2/0.3.3 en el VPS**: smoke completo, sesiones y registros reales.
 2. **0.3.x**: `kind: "battery"` y diagnósticos de batería desgastada;
    `write.channels` + ntfy self-hosted en loopback, estado `delivered` en el
    historial y aviso de entrega. Añadir `read.alerts` al catálogo o documentar

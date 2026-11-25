@@ -1,7 +1,7 @@
 # Probar en el móvil
 
-Estado: app `0.3.2` (versionCode 305) instalada en el Galaxy A54 como operator
-(release firmada, sólo `arm64-v8a`). Agente `0.3.2` activo; el entorno tiene un
+Estado: app `0.3.3` (versionCode 306) instalada en el Galaxy A54 como operator
+(release firmada, sólo `arm64-v8a`). Agente `0.3.3` activo; el entorno tiene un
 dispositivo y las reglas de las pruebas en curso. Para volver a cero, usa el
 reset destructivo del final de este documento.
 
@@ -321,7 +321,7 @@ App: descarga `vitals-<version>-android.apk` de la página de releases e
 instálala encima (misma clave de firma, los datos se conservan):
 
 ```bash
-adb install -r vitals-0.3.2-android.apk
+adb install -r vitals-0.3.3-android.apk
 ```
 
 La APK es sólo `arm64-v8a`. El keystore de firma vive en

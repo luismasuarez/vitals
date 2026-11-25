@@ -28,7 +28,7 @@ Para una versión concreta (lo usa el workflow de release):
 
 ```bash
 gradle assembleRelease \
-  -PvitalsVersionName=0.3.2 \
+  -PvitalsVersionName=0.3.3 \
   -PvitalsVersionCode=302 \
   -PvitalsKeystore=/ruta/release.jks \
   -PvitalsKeystorePassword=... \
