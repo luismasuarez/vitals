@@ -228,4 +228,21 @@ mod tests {
         assert_eq!(url_host(v4("192.168.1.5")), "192.168.1.5");
         assert_eq!(url_host(v6("fd7a:115c:a1e0::1")), "[fd7a:115c:a1e0::1]");
     }
+
+    #[test]
+    fn system_unit_allows_netlink_interface_enumeration() {
+        // getifaddrs() opens an AF_NETLINK socket. If the unit seccomp filter
+        // does not allow it, the agent dies with EAFNOSUPPORT before binding.
+        let unit = include_str!("../deploy/vitals.service");
+        let families = unit
+            .lines()
+            .find_map(|line| line.strip_prefix("RestrictAddressFamilies="))
+            .expect("the unit must restrict address families");
+        assert!(
+            families
+                .split_whitespace()
+                .any(|family| family == "AF_NETLINK"),
+            "RestrictAddressFamilies must include AF_NETLINK: {families}"
+        );
+    }
 }

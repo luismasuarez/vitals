@@ -352,6 +352,8 @@ clave del Keystore, la app pedirá reemparejar (comportamiento esperado).
 | `pin mismatch` | el certificado se rotó: re-empareja |
 | 401 en Ajustes | token revocado en el host: re-empareja |
 | QR no se lee | usa el pegado manual |
+| `vitals pair` dice «no encuentro el agente» | el servicio está caído: `systemctl status vitals` |
+| Servicio exit 1 con `Address family not supported` | unit antigua sin `AF_NETLINK`: reinstala `deploy/vitals.service` y reinicia |
 
 El repositorio es privado. Para descargas públicas:
 `gh repo edit --visibility public`.

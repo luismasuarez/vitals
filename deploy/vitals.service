@@ -57,7 +57,9 @@ ProcSubset=pid
 #PrivateDevices=yes
 
 # The unix control socket needs AF_UNIX; the API needs INET/INET6.
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# getifaddrs() opens AF_NETLINK to enumerate interfaces; without it the
+# service exits before binding with EAFNOSUPPORT (os error 97).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 # Egress allow-list: the agent has no business talking to the internet.
 # Note this also applies to bind(): a public address cannot be bound, so
