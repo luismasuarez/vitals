@@ -83,10 +83,10 @@ restante; `/host` añade `form_factor` y `virtualized`; el historial guarda
 bloque en hosts sin batería. Quedan fuera de esta entrega la alerta de batería
 baja, los diagnósticos de batería y la detección de suspensión/reanudación.
 
-**Estado (0.3.2, en preparación):** se cubre el caso VPS con el candidato #9
+**Estado (0.3.2, publicado):** se cubre el caso VPS con el candidato #9
 llevado a sesiones y autenticación: sesiones activas, accesos aceptados, fallos,
-IPs de origen y configuración de `sshd`, con diagnósticos accionables. No es un
-visor de logs completo ni incluye `btmp`, geoIP o fail2ban.
+direcciones de origen y configuración de `sshd`, con diagnósticos accionables.
+No es un visor de logs completo ni incluye `btmp`, geoIP o fail2ban.
 
 ## Las 3 apuestas
 

@@ -1,9 +1,9 @@
 # Probar en el móvil
 
-Estado: app `0.3.1` instalada en el Galaxy A54 (release firmada, sólo
-`arm64-v8a`); `0.3.2` está construida y pendiente de instalar. Agente `0.3.1`
-activo; el entorno tiene dispositivos y reglas de las pruebas en curso. Para
-volver a cero, usa el reset destructivo del final de este documento.
+Estado: app `0.3.2` (versionCode 305) instalada en el Galaxy A54 como operator
+(release firmada, sólo `arm64-v8a`). Agente `0.3.2` activo; el entorno tiene un
+dispositivo y las reglas de las pruebas en curso. Para volver a cero, usa el
+reset destructivo del final de este documento.
 
 Para empezar una prueba desde cero, empareja como operator y escanea el QR:
 

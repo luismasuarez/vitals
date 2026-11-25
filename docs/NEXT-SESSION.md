@@ -53,18 +53,18 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 
 | Cosa | Valor |
 |---|---|
-| Rama / tag | tag publicado `v0.3.1`; `main` tiene el commit de release-please (`chore(release): adopt release-please and commitlint`); 0.3.2 y la UI siguen en el árbol de trabajo, sin commit ni tag |
-| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.1 (CI en verde) |
-| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.1-android.apk` |
-| Servidor local | `systemctl --user vitals`, 0.3.2 local (binario gnu), activo, **2 dispositivos**: `Samsung A54` (operator) y `A54` (reader, el que usa la app) |
+| Rama / tag | tag publicado **`v0.3.2`**; `main` en el merge de release-please (`e00889b`) |
+| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.2 (CI y Release en verde) |
+| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.2-android.apk` (versionCode 305) |
+| Servidor local | `systemctl --user vitals`, 0.3.2 local (binario gnu), activo, **1 dispositivo**: `Samsung A54` (operator, `5d69f2ec453a`) |
 | Binario instalado | compilado en local (`cargo build --release`) para `x86_64-unknown-linux-gnu`; el release oficial sigue siendo musl |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` en uso, `0700`; reglas `disk-root` y `memory`; `disk-root` disparada |
 | Pin actual | `DfQbSeKgP4seLPKq20l_2g` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
-| App instalada | `dev.vitals.app` 0.3.2 (versionCode **304**) con la UI por temas y la pasada de claridad, instalada encima de 0.3.1 sin perder datos. El árbol y el release generan 302; Android no permite bajar de 304 a 302 sin desinstalar. |
-| App, estado UI | Emparejada como **reader** (`A54`, id `c75ee6a3b12a`); el token `operator` anterior (`Samsung A54`, id `7383b1aac4ba`) sigue válido en el host. Watchdog **apagado**. |
-| Entrega en curso | 0.3.2 «accesos» + UI por temas + pasada de claridad, implementada e instalada en pruebas; falta commit del árbol (aparte del commit de release) y release |
+| App instalada | `dev.vitals.app` 0.3.2 (versionCode **305**) con la UI por temas y la pasada de claridad, instalada encima de la build de pruebas sin perder datos. El código del release usa el mismo 305. |
+| App, estado UI | Emparejada como **operator** (`Samsung A54`, id `5d69f2ec453a`); los tokens reader y operator antiguos se revocaron. Watchdog **apagado**. |
+| Entrega en curso | 0.3.2 «accesos» + UI por temas + pasada de claridad, publicada e instalada. La siguiente entrega parte de `main` en `e00889b`. |
 | Dispositivo de pruebas | Galaxy A54, Android 16 (API 37), por adb en `192.168.1.101:35213` |
 | Firma APK | `~/keystores/vitals-release.jks` + `.properties` (0600); secrets en GitHub |
 
