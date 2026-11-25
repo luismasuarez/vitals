@@ -4,9 +4,21 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
 }
 
-// Release pipeline overrides: -PvitalsVersionName=0.2.0 -PvitalsVersionCode=200
-val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse("0.3.1")
-val vitalsVersionCode = providers.gradleProperty("vitalsVersionCode").getOrElse("301").toInt()
+// Release pipeline override: -PvitalsVersionName=<version>.
+//
+// The version name is the single source of truth for the APK: release-please
+// rewrites the literal between the annotations below. The version code is
+// derived from it (major*10000 + minor*100 + patch) unless it is passed
+// explicitly with -PvitalsVersionCode.
+val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse(
+    /* x-release-please-start-version */
+    "0.3.2"
+    /* x-release-please-end */
+)
+val vitalsVersionCode = providers.gradleProperty("vitalsVersionCode").orNull?.toInt() ?: run {
+    val (major, minor, patch) = vitalsVersionName.split(".").map { it.toInt() }
+    major * 10000 + minor * 100 + patch
+}
 val vitalsKeystore = providers.gradleProperty("vitalsKeystore").orNull
 
 android {

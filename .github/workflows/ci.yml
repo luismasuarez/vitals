@@ -14,6 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  commits:
+    name: Commits (commitlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The lint range needs the base branch and the pushed history.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # commitlint is not installed in the repository (it is a Rust project):
+      # npx fetches it, and commitlint.config.mjs carries the rules inline.
+      - name: Lint pull request commits
+        if: github.event_name == 'pull_request'
+        run: npx --yes @commitlint/cli@19 --from "origin/${{ github.base_ref }}" --to HEAD --verbose
+
+      - name: Lint pushed commits
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${BEFORE}" =~ ^0+$ ]]; then
+            # First push of a branch: there is no range to compare against.
+            npx --yes @commitlint/cli@19 --last --verbose
+          else
+            npx --yes @commitlint/cli@19 --from "${BEFORE}" --to "${HEAD_SHA}" --verbose
+          fi
+
   rust:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest

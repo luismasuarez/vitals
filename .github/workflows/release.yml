@@ -1,54 +1,72 @@
 name: Release
 
+# Everything lives in one workflow on purpose: a tag or a release created by
+# release-please with the default GITHUB_TOKEN does not trigger another
+# workflow run, so the build jobs must run in the same run as the release job,
+# gated on its `release_created` output.
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  # Recovery path: rebuild the artifacts for a release that already exists
+  # (for example after a failed APK build), without cutting a new version.
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to release, e.g. 0.2.0 (defaults to Cargo.toml)"
-        required: false
+      tag:
+        description: "Existing tag to rebuild and re-upload assets for, e.g. v0.3.2"
+        required: true
         type: string
 
-# Least privilege by default; only the release job can write.
+# Least privilege by default; each job opts into what it needs.
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 jobs:
+  release-please:
+    name: Release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # Opens or updates `chore(release): X.Y.Z`: CHANGELOG.md, Cargo.toml,
+      # Cargo.lock and the Android version name. Merging it creates the tag
+      # and the GitHub Release; this same run then builds the artifacts.
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   meta:
     name: Resolve version
+    needs: release-please
+    # A merged release PR, or a manual re-run for an existing tag.
+    if: needs.release-please.outputs.released == 'true' || inputs.tag != ''
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       version_code: ${{ steps.version.outputs.version_code }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Derive version, tag and Android versionCode
+      - name: Derive version and Android versionCode
         id: version
         shell: bash
         env:
-          INPUT_VERSION: ${{ inputs.version }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
+          TAG_NAME: ${{ inputs.tag || needs.release-please.outputs.tag }}
         run: |
           set -euo pipefail
 
-          if [[ -n "${INPUT_VERSION}" ]]; then
-            raw="${INPUT_VERSION}"
-          elif [[ "${REF_TYPE}" == "tag" ]]; then
-            raw="${REF_NAME}"
-          else
-            raw="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          fi
-
-          version="${raw#v}"
+          version="${TAG_NAME#v}"
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version '${version}', expected X.Y.Z"
             exit 1
@@ -276,19 +294,14 @@ jobs:
           path: dist/*.apk
           if-no-files-found: error
 
-  release:
-    name: Publish GitHub Release
-    needs: [meta, server, android]
+  publish:
+    name: Upload assets to the release
+    needs: [release-please, meta, server, android]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      # Full history and tags so git-cliff can compute the compare link.
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -297,51 +310,32 @@ jobs:
       - name: List downloaded assets
         run: ls -lh dist
 
-      # On a v* tag push, HEAD is tagged, so the latest section is this release.
-      - name: Generate changelog section (tag)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: orhun/git-cliff-action@v4
-        with:
-          config: cliff.toml
-          args: --latest --strip header
-        env:
-          OUTPUT: ${{ runner.temp }}/changelog-section.md
-
-      # workflow_dispatch builds the tag, so treat the pending commits as the
-      # unreleased section labelled with the version being published.
-      - name: Generate changelog section (dispatch)
-        if: github.event_name == 'workflow_dispatch'
-        uses: orhun/git-cliff-action@v4
-        with:
-          config: cliff.toml
-          args: --unreleased --strip header --tag ${{ needs.meta.outputs.tag }}
-        env:
-          OUTPUT: ${{ runner.temp }}/changelog-section.md
-
-      - name: Generate SHA256SUMS and release notes
+      - name: Upload assets and extend the release notes
         shell: bash
         env:
-          VERSION: ${{ needs.meta.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           TAG: ${{ needs.meta.outputs.tag }}
-          CHANGELOG_SECTION: ${{ runner.temp }}/changelog-section.md
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-
-          # Replace the placeholder repo in the generated changelog links.
-          sed -i "s|TU_USUARIO/vitals|${GITHUB_REPOSITORY}|g" "${CHANGELOG_SECTION}"
 
           apk="$(find dist -maxdepth 1 -name 'vitals-*-android*.apk' | head -n1)"
           test -n "${apk}" || { echo "::error::APK asset not found"; exit 1; }
           apk_name="$(basename "${apk}")"
           x86="vitals-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
           arm="vitals-${VERSION}-aarch64-unknown-linux-musl.tar.gz"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          base="https://github.com/${REPO}/releases/download/${TAG}"
 
           (
             cd dist
             sha256sum ./*.tar.gz ./*.apk > SHA256SUMS
             cat SHA256SUMS
           )
+
+          # release-please already wrote the changelog as the release notes:
+          # keep it at the end, after the download and install sections.
+          changelog="$(gh release view "${TAG}" --repo "${REPO}" --json body -q .body)"
 
           {
             echo "## Descargas"
@@ -386,27 +380,14 @@ jobs:
             echo
             echo "## Cambios"
             echo
-            cat "${CHANGELOG_SECTION}"
+            printf '%s\n' "${changelog}"
           } > "${RUNNER_TEMP}/release-body.md"
 
-      - name: Create GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.meta.outputs.tag }}
-          VERSION: ${{ needs.meta.outputs.version }}
-          BODY: ${{ runner.temp }}/release-body.md
-        run: |
-          set -euo pipefail
-          assets=(dist/*.tar.gz dist/*.apk dist/SHA256SUMS)
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            gh release create "${TAG}" "${assets[@]}" \
-              --title "vitals ${VERSION}" \
-              --notes-file "${BODY}"
-          else
-            # workflow_dispatch without a tag: create it on the built commit.
-            gh release create "${TAG}" "${assets[@]}" \
-              --title "vitals ${VERSION}" \
-              --notes-file "${BODY}" \
-              --target "${GITHUB_SHA}"
-          fi
+          gh release upload "${TAG}" \
+            --repo "${REPO}" \
+            --clobber \
+            dist/*.tar.gz dist/*.apk dist/SHA256SUMS
+
+          gh release edit "${TAG}" \
+            --repo "${REPO}" \
+            --notes-file "${RUNNER_TEMP}/release-body.md"
