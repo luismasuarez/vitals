@@ -73,7 +73,8 @@ jobs:
           fi
 
           IFS=. read -r major minor patch <<< "${version}"
-          code=$(( major * 10000 + minor * 100 + patch ))
+          # Keep published codes above the local 303/304 test installs.
+          code=$(( major * 10000 + minor * 100 + patch + 3 ))
 
           {
             echo "version=${version}"

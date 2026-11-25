@@ -9,7 +9,8 @@ plugins {
 // The version name is the single source of truth for the APK: release-please
 // rewrites the literal between the annotations below. The version code is
 // derived from it (major*10000 + minor*100 + patch) unless it is passed
-// explicitly with -PvitalsVersionCode.
+// explicitly with -PvitalsVersionCode. The offset keeps published codes above
+// the 303/304 builds installed while testing the 0.3.2 UI locally.
 val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse(
     /* x-release-please-start-version */
     "0.3.2"
@@ -17,7 +18,7 @@ val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse(
 )
 val vitalsVersionCode = providers.gradleProperty("vitalsVersionCode").orNull?.toInt() ?: run {
     val (major, minor, patch) = vitalsVersionName.split(".").map { it.toInt() }
-    major * 10000 + minor * 100 + patch
+    major * 10000 + minor * 100 + patch + 3
 }
 val vitalsKeystore = providers.gradleProperty("vitalsKeystore").orNull
 
