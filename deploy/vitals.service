@@ -21,6 +21,11 @@ RuntimeDirectory=vitals
 RuntimeDirectoryMode=0700
 UMask=0077
 
+# Read-only access to the login records shown in the app: /var/log/auth.log is
+# group adm, journalctl needs systemd-journal. Remove a group here if the host
+# does not have it, or the unit will refuse to start.
+SupplementaryGroups=adm systemd-journal
+
 # --- sandbox -------------------------------------------------------------
 NoNewPrivileges=yes
 ProtectSystem=strict

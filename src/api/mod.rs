@@ -2,7 +2,7 @@ pub mod command;
 pub mod handlers;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use axum::middleware;
@@ -14,6 +14,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::{self, DeviceLimiter, RateLimiter};
+use crate::collect::access::AccessSnapshot;
 use crate::collect::{ProcSampler, Sample};
 use crate::store::Store;
 
@@ -51,6 +52,8 @@ pub struct AppState {
     pub store: Arc<Store>,
     pub tx: broadcast::Sender<Arc<Sample>>,
     pub last: Arc<Mutex<Option<Arc<Sample>>>>,
+    /// Latest SSH access snapshot, refreshed by the sampler.
+    pub access: Arc<RwLock<Option<Arc<AccessSnapshot>>>>,
     pub pin: Arc<String>,
     /// Recomputed whenever the local address set changes.
     pub endpoints: Arc<std::sync::RwLock<Vec<String>>>,
@@ -84,6 +87,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/info", get(handlers::info))
         .route("/api/v1/diagnostics", get(handlers::diagnostics))
         .route("/api/v1/suggest", get(handlers::suggest))
+        .route("/api/v1/access", get(handlers::access))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,
@@ -141,6 +145,7 @@ mod tests {
             store: Arc::new(Store::in_memory()),
             tx,
             last: Arc::new(Mutex::new(None)),
+            access: Arc::new(RwLock::new(None)),
             pin: Arc::new("test-pin".into()),
             endpoints: Arc::new(std::sync::RwLock::new(Vec::new())),
             host: Arc::new(HostInfo {
@@ -209,6 +214,7 @@ mod tests {
             "/api/v1/caps",
             "/api/v1/diagnostics",
             "/api/v1/suggest",
+            "/api/v1/access",
         ] {
             assert_eq!(
                 status(&app, "POST", path, Some(&token)).await,
@@ -260,6 +266,10 @@ mod tests {
         assert_eq!(
             status(&app, "GET", "/api/v1/metrics", Some(&token)).await,
             StatusCode::SERVICE_UNAVAILABLE // token accepted, collector empty
+        );
+        assert_eq!(
+            status(&app, "GET", "/api/v1/access", Some(&token)).await,
+            StatusCode::SERVICE_UNAVAILABLE
         );
     }
 

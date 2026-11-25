@@ -225,6 +225,7 @@ pub async fn alerts(State(st): State<AppState>, Query(q): Query<AlertsQuery>) ->
 
 fn diagnostic_report(st: &AppState) -> crate::diagnostics::Report {
     let sample = st.last.lock().ok().and_then(|slot| slot.clone());
+    let access = st.access.read().ok().and_then(|slot| slot.clone());
     let endpoints = st
         .endpoints
         .read()
@@ -236,6 +237,7 @@ fn diagnostic_report(st: &AppState) -> crate::diagnostics::Report {
     crate::diagnostics::report(
         &st.host,
         sample.as_deref(),
+        access.as_deref(),
         &endpoints,
         rules,
         &predictions,
@@ -259,6 +261,74 @@ pub async fn suggest(State(st): State<AppState>) -> Json<Value> {
         "generated_at": now_ts(),
         "suggestions": report.suggestions,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccessQuery {
+    pub range: Option<String>,
+}
+
+/// Sessions now plus the logins and failures in the requested window. The
+/// window is informational: the agent always reads up to seven days.
+pub async fn access(State(st): State<AppState>, Query(q): Query<AccessQuery>) -> impl IntoResponse {
+    let snapshot = st.access.read().ok().and_then(|slot| slot.clone());
+    let Some(snapshot) = snapshot else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "collector warming up" })),
+        )
+            .into_response();
+    };
+
+    let range = q.range.as_deref().unwrap_or("24h");
+    let window_s = match range {
+        "24h" => 86_400,
+        "7d" => 7 * 86_400,
+        _ => {
+            return err(StatusCode::BAD_REQUEST, "range must be 24h or 7d").into_response();
+        }
+    };
+    let cutoff = now_ts() - window_s;
+    let logins: Vec<_> = snapshot
+        .logins
+        .iter()
+        .filter(|event| event.t >= cutoff)
+        .collect();
+    let failures: Vec<_> = snapshot
+        .failures
+        .iter()
+        .filter(|event| event.t >= cutoff)
+        .collect();
+    let sources: Vec<_> = snapshot
+        .sources
+        .iter()
+        .filter(|source| source.last_t >= cutoff)
+        .collect();
+    let (logins_total, failures_total) = if window_s > 86_400 {
+        (snapshot.logins_7d, snapshot.failures_7d)
+    } else {
+        (snapshot.logins_24h, snapshot.failures_24h)
+    };
+
+    Json(json!({
+        "updated": snapshot.updated,
+        "range": if window_s > 86_400 { "7d" } else { "24h" },
+        "window_s": window_s,
+        "source": snapshot.source,
+        "covered_s": snapshot.covered_s,
+        "sessions": &snapshot.sessions,
+        "logins": logins,
+        "failures": failures,
+        "sources": sources,
+        "ssh": &snapshot.ssh,
+        "totals": {
+            "logins": logins_total,
+            "failures": failures_total,
+            "sessions": snapshot.sessions.len(),
+            "remote_sessions": snapshot.sessions.iter().filter(|session| session.remote).count(),
+        },
+    }))
+    .into_response()
 }
 
 /// Operator only: the grant state of this device, including pending requests

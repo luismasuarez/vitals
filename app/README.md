@@ -28,8 +28,8 @@ Para una versión concreta (lo usa el workflow de release):
 
 ```bash
 gradle assembleRelease \
-  -PvitalsVersionName=0.3.1 \
-  -PvitalsVersionCode=301 \
+  -PvitalsVersionName=0.3.2 \
+  -PvitalsVersionCode=302 \
   -PvitalsKeystore=/ruta/release.jks \
   -PvitalsKeystorePassword=... \
   -PvitalsKeyAlias=... \
@@ -70,9 +70,18 @@ adb shell am start -n dev.vitals.app/.MainActivity -e watch 0
 | `watchdog/Watchdog.kt` | Estado observable, preferencia y job periódico de WorkManager |
 | `watchdog/WatchdogWorker.kt` | Revive el servicio cada 15 min si el sistema lo mata |
 | `ui/Onboarding.kt` | Cámara con CameraX + ML Kit, pasos de emparejamiento |
-| `ui/Screens.kt` | Inicio, CPU, Red, Procesos |
-| `ui/Manage.kt` | Reglas de alerta y permisos por dispositivo |
-| `ui/Components.kt` | Tarjetas, anillo, gráficos en Canvas, iconos, tab bar |
+| `ui/Navigation.kt` | Destinos, sub-tabs de Recursos/Accesos y metadatos de la barra |
+| `ui/screens/OverviewScreen.kt` | Resumen: veredicto, estado, energía y accesos |
+| `ui/screens/ResourcesScreen.kt` | CPU, memoria, discos, red y energía |
+| `ui/screens/AccessScreen.kt` | Accesos: ahora, actividad y SSH |
+| `ui/screens/AlertsScreen.kt` | Reglas, riesgo sin regla, vigilancia e historial |
+| `ui/screens/MoreScreens.kt` | Más, ajustes, conexión, diagnóstico y permisos |
+| `ui/screens/ProcessesScreen.kt` | Lista de procesos en vivo |
+| `ui/Copy.kt` | Términos y formatos compartidos de la interfaz |
+| `ui/Components.kt` | Tarjetas, anillo, gráficos en Canvas, iconos, barras y estados |
+
+El mapa de pantallas, el sistema visual y las reglas de copy están en
+[`docs/UI.md`](../docs/UI.md).
 
 Decisiones que conviene no deshacer:
 
@@ -80,7 +89,8 @@ Decisiones que conviene no deshacer:
   un cambio de IP por DHCP no rompe nada y un atacante en la LAN no puede
   interponerse sin la clave del host.
 - **SSE con `fetch`/EventSource de OkHttp y polling de respaldo** cada 2,5 s si
-  el stream cae. El indicador del topbar muestra `SSE` o `polling`.
+  el stream cae. El topbar muestra el tipo de endpoint y un punto verde/ámbar;
+  el transporte exacto (`SSE` o `sondeo`) vive en **Más › Conexión**.
 - **Failover en cada request**: si el endpoint activo no responde, se prueba el
   siguiente del QR y se recuerda el que funcionó.
 - **La vigilancia es un servicio en primer plano, no un worker.** WorkManager
@@ -89,7 +99,7 @@ Decisiones que conviene no deshacer:
 
 ## Vigilancia
 
-Se activa en **Ajustes → Vigilancia**. La primera vez pide permiso de
+Se activa en **Alertas → Vigilancia de caída**. La primera vez pide permiso de
 notificaciones (Android 13+). Mientras está activa:
 
 - Notificación permanente de baja importancia: `vitals vigilando · <host>`.
@@ -102,28 +112,40 @@ notificaciones (Android 13+). Mientras está activa:
   las restricciones de arranque en segundo plano de Android 12+). Para máxima
   fiabilidad conviene excluir la app de la optimización de batería.
 - El estado (`vigilando`, `caído`, `conectando`) también se ve en la píldora del
-  topbar y en Inicio.
+  topbar, en Resumen y en Ajustes.
 
 ## Energía
 
-Si el agente reporta `power` (portátiles), **Inicio** muestra una tarjeta con el
+Si el agente reporta `power` (portátiles), **Recursos › Energía** muestra el
 porcentaje, estado de carga, tiempo restante o hasta el 100 %, consumo, salud,
 ciclos y una gráfica de las últimas 24 h. En servidores y VPS el objeto no
-existe y la tarjeta no se dibuja. Los valores salen de `/sys/class/power_supply`
-y el agente los normaliza antes de enviarlos; la app no lee sensores locales.
+existe y la pestaña no se dibuja; Resumen tampoco muestra la fila. Los valores
+salen de `/sys/class/power_supply` y el agente los normaliza antes de enviarlos;
+la app no lee sensores locales.
+
+## Accesos
+
+Si el agente reporta `access`, **Resumen** muestra una fila con sesiones,
+fallos y postura de SSH. **Accesos** lo abre por temas: **Ahora** (sesiones y
+resumen), **Registros de acceso** (accesos, fallos y direcciones con etiqueta
+`local`/`externa` y `nueva`) y **SSH** (`PasswordAuthentication` y
+`PermitRootLogin`). El selector 24 h / 7 días vuelve a pedir `/api/v1/access`;
+la pantalla no ejecuta ningún comando.
 
 ## Reglas y permisos
 
-Ambas pantallas se abren desde **Ajustes** y necesitan un token `operator`:
+**Alertas** es un destino principal; **Permisos** vive en **Más**. Ambos
+necesitan un token `operator`:
 
 ```bash
 vitals pair --operator --name "mi-telefono"
 ```
 
-- **Reglas**: tres plantillas (disco >85 % o <7 días, memoria >90 %, temperatura
-  >85 °C), lista de reglas activas con estado e historial de 30 días. Permite
-  silenciar 1/8/24 h y quitar reglas. Crear una regla son tres toques desde
-  Inicio.
+- **Reglas**: una plantilla por disco (>85 % o <7 días), memoria (>90 %) y
+  temperatura (>85 °C), lista de reglas activas con estado e historial de 30
+  días. Permite silenciar 1/8/24 h y quitar reglas. Si un disco está por encima
+  del 90 % y no tiene regla, **Alertas** lo muestra como riesgo con la acción
+  para crearla; no se crea sola.
 - **Permisos**: capabilities incluidas en el token y `exec.*` que requieren
   aprobación. Antes de solicitar se muestra el riesgo y se piden los parámetros
   (unidad o tamaño máximo). La solicitud devuelve el código de 6 caracteres que

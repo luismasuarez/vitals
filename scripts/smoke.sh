@@ -121,6 +121,41 @@ fi
 curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/host" | grep -q '"hostname"' || fail "host"
 pass "static host info"
 
+# SSH access is optional: the object is absent when neither sessions nor logs
+# are readable (for example, the service lacks adm/systemd-journal).
+if echo "$METRICS" | grep -q '"access"'; then
+  python3 - "$METRICS" <<'PY' || fail "access payload"
+import json, sys
+access = json.loads(sys.argv[1])["access"]
+assert isinstance(access["sessions"], list), access
+assert isinstance(access["logins_24h"], int), access
+assert isinstance(access["failures_24h"], int), access
+assert isinstance(access["password_auth"], bool), access
+assert isinstance(access["config_read"], bool), access
+assert isinstance(access["root_login"], str), access
+assert isinstance(access["source"], str), access
+PY
+  pass "ssh access snapshot"
+
+  ACCESS=$(curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/access?range=7d")
+  python3 - "$ACCESS" <<'PY' || fail "access report"
+import json, sys
+report = json.loads(sys.argv[1])
+assert report["range"] == "7d", report
+for key in ("sessions", "logins", "failures", "sources"):
+    assert isinstance(report[key], list), key
+assert isinstance(report["ssh"]["password_auth"], bool), report
+assert "totals" in report, report
+PY
+  pass "access report"
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/access?range=forever")
+  [[ "$code" == "400" ]] || fail "bad access range returned $code, expected 400"
+  pass "invalid access range rejected"
+else
+  pass "no access payload (nothing readable)"
+fi
+
 curl -fsS --cacert "$CACERT" "${AUTH[@]}" "$BASE/api/v1/history?range=1h" | grep -q '"points"' || fail "history"
 pass "history query"
 

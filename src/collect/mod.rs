@@ -1,3 +1,4 @@
+pub mod access;
 pub mod platform;
 pub mod power;
 pub mod sys;
@@ -19,6 +20,9 @@ pub struct Sample {
     /// Absent on hosts without a readable battery.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub power: Option<power::Power>,
+    /// SSH sessions and login counts. Absent until the first access refresh.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<access::Access>,
     pub uptime: u64,
 }
 

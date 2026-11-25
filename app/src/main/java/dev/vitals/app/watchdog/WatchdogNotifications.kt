@@ -56,10 +56,10 @@ object WatchdogNotifications {
         NotificationCompat.Builder(context, CHANNEL_ALERTS)
             .setSmallIcon(R.drawable.ic_stat_vitals)
             .setContentTitle("$host no responde")
-            .setContentText("Sin datos desde hace ${seconds}s")
+            .setContentText("Sin respuesta desde hace ${seconds} s")
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "Sin datos desde hace ${seconds}s. Revisa la red, Tailscale o el servicio vitals del host.",
+                    "Sin respuesta desde hace ${seconds} s. Revisa la red, Tailscale o el servicio vitals del host.",
                 ),
             )
             .setContentIntent(openApp(context))
@@ -72,7 +72,7 @@ object WatchdogNotifications {
         NotificationCompat.Builder(context, CHANNEL_ALERTS)
             .setSmallIcon(R.drawable.ic_stat_vitals)
             .setContentTitle("$host vuelve a responder")
-            .setContentText("Caído durante ${formatDuration(outageSeconds)}")
+            .setContentText("Sin respuesta durante ${formatDuration(outageSeconds)}")
             .setContentIntent(openApp(context))
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -111,7 +111,7 @@ object WatchdogNotifications {
     }
 
     private fun formatDuration(seconds: Long): String = when {
-        seconds < 60 -> "${seconds}s"
+        seconds < 60 -> "$seconds s"
         seconds < 3_600 -> "${seconds / 60} min"
         else -> "${seconds / 3_600} h"
     }

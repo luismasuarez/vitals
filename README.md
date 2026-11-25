@@ -2,8 +2,8 @@
 
 Agente de métricas del host sobre HTTPS con certificado propio y pinning.
 Pensado para un cliente Android que consulta CPU, memoria, discos, red,
-temperaturas, procesos y, en portátiles, batería y consumo de un único host,
-tanto en la red local como a través de Tailscale.
+temperaturas, procesos, sesiones y accesos SSH y, en portátiles, batería y
+consumo de un único host, tanto en la red local como a través de Tailscale.
 
 Un binario, sin runtime, sin dependencias del sistema (SQLite compilado dentro).
 La lectura es libre para cualquier token; la única escritura pasa por un
@@ -147,6 +147,25 @@ guarda `battery_pct` y `power_w`. En servidores y VPS el objeto no aparece y la
 app oculta la tarjeta, así que el contrato sigue siendo el mismo. No hay
 detección de suspensión ni alerta de batería baja todavía.
 
+### Accesos
+
+`/metrics` incluye un objeto `access` con las sesiones activas, los accesos
+aceptados y los intentos fallidos de las últimas 24 h, más el estado de
+`PasswordAuthentication` y `PermitRootLogin`. `GET /api/v1/access?range=7d`
+devuelve el detalle por evento, el resumen por dirección de origen y la
+cobertura real del registro. Las sesiones salen de `/run/systemd/sessions` (o
+`/run/utmp`); los eventos, de `journalctl -u ssh -u sshd` y de
+`/var/log/auth.log*`, sin duplicados.
+
+En un VPS o servidor esto es lo que responde «¿quién ha entrado?». La app
+muestra una tarjeta **ACCESOS** en Inicio y una pantalla con sesiones, últimos
+accesos, fallos y direcciones. El diagnóstico añade avisos si SSH acepta
+contraseñas, permite root con contraseña, acumula fallos o recibe una IP nueva.
+
+El servicio necesita leer los registros: la unit de ejemplo incluye
+`SupplementaryGroups=adm systemd-journal`. Sin esos grupos el agente sigue
+funcionando y avisa de que los registros no son legibles.
+
 ### Rotar el certificado
 
 El pin cambia, así que todos los dispositivos deben re-emparejarse:
@@ -163,8 +182,11 @@ dispositivos que ya no uses.
 
 ## App Android
 
-La app nativa vive en `app/` (Kotlin + Compose) y replica la interfaz del
-mockup hablando la API real:
+La app nativa vive en `app/` (Kotlin + Compose). La interfaz está organizada por
+temas: **Resumen**, **Recursos** (CPU, Memoria, Discos, Red, Energía),
+**Accesos** (Ahora mismo, Registros de acceso, SSH), **Alertas** y **Más** (Procesos,
+Diagnóstico, Permisos, Conexión, Ajustes). El mapa completo y las reglas de
+diseño están en [`docs/UI.md`](docs/UI.md). Habla la API real con:
 
 - **Pinning**: `X509TrustManager` propio que compara `sha256(cert.encoded)[..16]`
   con el `pin` del QR. El `HostnameVerifier` acepta el certificado ya validado:
@@ -177,14 +199,20 @@ mockup hablando la API real:
   cuando no hay cámara o permiso: pegar el payload o `-e pair "vitals1:…"`.
 - **Vigilancia**: servicio en primer plano con SSE, notificación permanente y
   aviso de host caído en unos 30 s; WorkManager lo revive cada 15 min. Se
-  activa en Ajustes y el estado se ve en el topbar.
-- **Reglas y permisos**: pantalla de reglas con 3 plantillas, silencio 1/8/24 h e
-  historial de 30 días; pantalla de permisos con riesgo, estado por dispositivo
-  y el código de la solicitud. Requieren token `operator`.
+  activa en **Alertas › Vigilancia de caída** y el estado se ve en el topbar y
+  en Ajustes.
+- **Reglas y permisos**: **Alertas** reúne las plantillas (una regla por disco,
+  memoria y temperatura), el silencio 1/8/24 h, el riesgo sin regla y el
+  historial de 30 días. **Más › Permisos** muestra el riesgo, el estado por
+  dispositivo y el código de la solicitud. Requieren token `operator`.
 - **Diagnóstico**: hallazgos del host y el comando exacto que los arreglaría,
-  visibles en Ajustes y nunca ejecutados por la app.
-- **Energía**: en un portátil, Inicio muestra batería, estado, tiempo restante,
-  consumo, salud, ciclos y una gráfica de 24 h; se oculta sola en un servidor.
+  en **Más › Diagnóstico**; nunca se ejecutan.
+- **Energía**: en un portátil, **Recursos › Energía** muestra batería, estado,
+  tiempo restante, consumo, salud, ciclos y una gráfica de 24 h; la pestaña se
+  oculta sola en un servidor.
+- **Accesos**: **Accesos › Ahora** responde “¿quién está dentro?”;
+  **Registros de acceso** lista accesos, fallos y direcciones de 24 h o 7 días; **SSH**
+  explica `PasswordAuthentication` y `PermitRootLogin`.
 
 ```bash
 cd app && ./gradlew assembleDebug
@@ -199,9 +227,11 @@ Detalles de arquitectura, firma y limitaciones en [`app/README.md`](app/README.m
 
 ## Mockup web
 
-`mockup/web` es el prototipo con el que se validó la UI antes de escribir
-Kotlin. Sigue sirviendo para probar el agente desde el navegador: publica la web
-en la LAN y hace de proxy con verificación de pin.
+`mockup/web` es el prototipo con el que se validó la primera UI antes de
+escribir Kotlin. Sigue sirviendo para probar el agente desde el navegador, pero
+**no refleja la navegación actual** (4 pestañas frente a los 5 destinos y las
+sub-pantallas de la app): la fuente de verdad es [`docs/UI.md`](docs/UI.md).
+Publica la web en la LAN y hace de proxy con verificación de pin.
 
 ```bash
 python3 mockup/serve.py --port 8080
@@ -220,13 +250,17 @@ cd app && ./gradlew assembleDebug
 
 El smoke test cubre: handshake con `--cacert`, 401 sin token, pairing por
 socket, intercambio de código, métricas, batería y energía (si el host la
-tiene), histórico con `battery_pct`, procesos, SSE, reutilización de código,
-revocación, scopes `reader`/`operator`, esquema cerrado de `command`, límite de
-4 KB, idempotencia, concesión y revocación de capabilities en dos dispositivos
+tiene), accesos SSH y reporte de accesos (si son legibles), histórico con
+`battery_pct`, procesos, SSE, reutilización de código, revocación, scopes
+`reader`/`operator`, esquema cerrado de `command`, límite de 4 KB,
+idempotencia, concesión y revocación de capabilities en dos dispositivos
 (por lista y por código), auditoría visible sólo para `operator`, reglas de
 alerta con histéresis, silencio, borrado y persistencia tras reiniciar, estado
 de capabilities por dispositivo y diagnósticos con comandos sugeridos.
 La app se probó en un Galaxy A54 contra el agente real.
+
+La convención de commits y el proceso de release están en
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Limitaciones conocidas
 
@@ -247,11 +281,13 @@ La app se probó en un Galaxy A54 contra el agente real.
 
 ## Estado del proyecto
 
-v0.3.1 publicada: contrato `command`, scopes, auditoría, alertas con histéresis
-y predicción, watchdog de host caído, token en Keystore, diagnósticos,
-pantallas de reglas/permisos y **estado del portátil** (batería, AC, consumo,
-salud, `form_factor` e histórico de energía). Servidor, app Android, mockup web
-y pipeline de release con changelog generado por conventional commits.
+v0.3.1 publicada y 0.3.2 «accesos» implementada, pendiente de release: contrato
+`command`, scopes, auditoría, alertas con histéresis y predicción, watchdog de
+host caído, token en Keystore, diagnósticos, pantallas de reglas/permisos,
+**estado del portátil** (batería, AC, consumo, salud, `form_factor` e histórico
+de energía) y **accesos SSH** (sesiones, accesos, fallos y configuración).
+Servidor, app Android, mockup web y pipeline de release con changelog generado
+por conventional commits.
 
 Release: https://github.com/luismasuarez/vitals/releases/tag/v0.3.1
 

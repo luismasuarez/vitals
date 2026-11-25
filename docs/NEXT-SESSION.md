@@ -1,4 +1,4 @@
-# Prompt para continuar — vitals 0.3.1 «portátil»
+# Prompt para continuar — vitals 0.3.2 «accesos»
 
 > Copia este archivo completo como primer mensaje de la nueva sesión.
 
@@ -19,7 +19,20 @@ host caído con un servicio en primer plano. La única escritura remota pasa por
 
 En 0.3.x añade el estado del portátil: batería, AC, consumo, salud y tiempo
 restante en `/metrics`; `form_factor` en `/host`; e histórico de
-`battery_pct`/`power_w`.
+`battery_pct`/`power_w`. La entrega 0.3.2 añade **accesos SSH**: sesiones
+activas, accesos aceptados, fallos, IPs de origen y configuración de `sshd`,
+pensado sobre todo para VPS.
+
+## UI de 0.3.2
+
+La app se reorganizó por temas: **Resumen**, **Recursos** (CPU, Memoria,
+Discos, Red, Energía), **Accesos** (Ahora mismo, Registros de acceso, SSH), **Alertas** y
+**Más** (Procesos, Diagnóstico, Permisos, Conexión, Ajustes). Hay pila de
+navegación con Atrás real, rail lateral en wide, estados vacíos/offline,
+contraste corregido y objetivos táctiles de 48 dp. El mapa, el sistema visual y
+las reglas de copy están en [`UI.md`](UI.md); las capturas de verificación en
+`.impeccable/review/after/`. El mockup web sigue con la navegación antigua y no
+es la fuente de verdad.
 
 ## Cómo usar este documento
 
@@ -40,17 +53,18 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 
 | Cosa | Valor |
 |---|---|
-| Rama / tag | tag `v0.3.1`; `main` puede llevar commits de documentación posteriores |
+| Rama / tag | tag publicado `v0.3.1`; `main` tiene el commit de release-please (`chore(release): adopt release-please and commitlint`); 0.3.2 y la UI siguen en el árbol de trabajo, sin commit ni tag |
 | Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.1 (CI en verde) |
 | Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.1-android.apk` |
-| Servidor local | `systemctl --user vitals`, 0.3.1, activo, **1 dispositivo** `Samsung A54` (operator) |
-| Binario instalado | musl descargado del propio release con `vitals-update --force` |
+| Servidor local | `systemctl --user vitals`, 0.3.2 local (binario gnu), activo, **2 dispositivos**: `Samsung A54` (operator) y `A54` (reader, el que usa la app) |
+| Binario instalado | compilado en local (`cargo build --release`) para `x86_64-unknown-linux-gnu`; el release oficial sigue siendo musl |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` en uso, `0700`; reglas `disk-root` y `memory`; `disk-root` disparada |
 | Pin actual | `DfQbSeKgP4seLPKq20l_2g` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
-| App instalada | `dev.vitals.app` 0.3.1 desde el APK publicado, instalada encima de 0.2.1 sin perder datos |
-| App, estado UI | Emparejada como `operator`; notificaciones concedidas; watchdog **vigilando** |
+| App instalada | `dev.vitals.app` 0.3.2 (versionCode **304**) con la UI por temas y la pasada de claridad, instalada encima de 0.3.1 sin perder datos. El árbol y el release generan 302; Android no permite bajar de 304 a 302 sin desinstalar. |
+| App, estado UI | Emparejada como **reader** (`A54`, id `c75ee6a3b12a`); el token `operator` anterior (`Samsung A54`, id `7383b1aac4ba`) sigue válido en el host. Watchdog **apagado**. |
+| Entrega en curso | 0.3.2 «accesos» + UI por temas + pasada de claridad, implementada e instalada en pruebas; falta commit del árbol (aparte del commit de release) y release |
 | Dispositivo de pruebas | Galaxy A54, Android 16 (API 37), por adb en `192.168.1.101:35213` |
 | Firma APK | `~/keystores/vitals-release.jks` + `.properties` (0600); secrets en GitHub |
 
@@ -59,7 +73,7 @@ el dispositivo y las dos reglas son los que quedaron al validar la app. No hay
 concesiones `exec.*` ni manifiesto. Para volver a cero, usa la sección «Cómo
 probar desde cero».
 
-> Snapshot al cerrar la sesión (23/11/2026). Si se sigue probando, el número de
+> Snapshot al cerrar la sesión (24/11/2026). Si se sigue probando, el número de
 > dispositivos, reglas y eventos cambiará; el pin se mantiene mientras no se
 > rote el certificado.
 
@@ -158,13 +172,56 @@ todos los campos opcionales, se filtra el mount al serializar y se publicó
 baja (sólo descargando, con histéresis y recuperación al conectar AC),
 diagnósticos de batería desgastada y detección de suspensión/reanudación.
 
+## Implementado en 0.3.2 (en preparación)
+
+### Accesos SSH
+
+- `src/collect/access.rs` mantiene un snapshot con refresco rápido de sesiones
+  (5 s) y lento de registros (60 s, últimos 7 días).
+- Sesiones: `/run/systemd/sessions` (se saltan los FIFO `*.ref` y las clases
+  `manager`/`systemd-user`); respaldo `/run/utmp` con el `struct utmp` de 384
+  bytes. Incluye consola y SSH, con usuario, tty, servicio, host y antigüedad.
+- Eventos: `journalctl -u ssh -u sshd --since -7d` y `/var/log/auth.log` +
+  `.1` + `/var/log/secure`. Se aceptan ISO 8601 con offset (journal) y syslog
+  clásico sin año (se asume el año local y se retrocede uno al cruzar enero).
+  Se deduplican ambos orígenes por segundo/usuario/host/resultado.
+- Se reconocen `Accepted`, `Failed` (con `invalid user`), `Invalid user` y
+  «maximum authentication attempts exceeded». El ruido (`pam_unix`, `session
+  opened`, `Received disconnect`) se ignora.
+- Config: `PasswordAuthentication` y `PermitRootLogin` de
+  `/etc/ssh/sshd_config.d/*.conf` (ordenados) y `/etc/ssh/sshd_config`; el
+  primer valor encontrado gana, como hace `sshd`. `files` vacío significa que
+  no se pudo leer.
+- Payload `/metrics`: objeto `access` con sesiones, totales de 24 h, último
+  acceso, último fallo, `password_auth`, `config_read`, `root_login` y `source`.
+- `GET /api/v1/access?range=24h|7d`: eventos (máx. 100), agrupación por IP
+  (máx. 100) con `public` y `new`, totales de la ventana y `covered_s`.
+- IP pública es la que no es RFC1918, loopback, link-local, CGNAT, broadcast ni
+  ULA/link-local IPv6. `new` exige más de un día de cobertura.
+- Diagnósticos nuevos: `ssh.password_auth`, `ssh.root_login`,
+  `ssh.failed_logins` (warning con ≥5 en 24 h, critical con ≥50),
+  `ssh.new_source` y `ssh.logs_unreadable`, con sugerencias `ssh.*`
+  (drop-in de `sshd`, `ufw deny from` o `SupplementaryGroups`).
+- `deploy/vitals.service` añade `SupplementaryGroups=adm systemd-journal`;
+  sin esos grupos el snapshot sigue saliendo con `source: "none"`.
+- App: modelos `AccessSummary`/`AccessReport`, tarjeta **ACCESOS** en Inicio y
+  pantalla `AccessScreen` con SSH, sesiones, últimos accesos, fallos,
+  direcciones y selector 24 h/7 días.
+- `smoke.sh` valida el objeto cuando existe, el reporte `7d` y el `400` con un
+  `range` inválido.
+- Dependencia nueva: `chrono` 0.4 (sólo `clock` y `std`).
+
+**Fuera de esta entrega, anotado:** `btmp` (los fallos ya no están en `wtmp`),
+geoIP, integración con fail2ban y regla de alerta de accesos.
+
 ## Modelo de permisos, en concreto
 
-| Capability | Qué permite en 0.2.x | Cómo se obtiene |
+| Capability | Qué permite en 0.3.x | Cómo se obtiene |
 |---|---|---|
-| `read.metrics` | `GET /metrics` (última muestra) | con el scope |
+| `read.metrics` | `GET /metrics` (última muestra, con `power` y `access`) | con el scope |
 | `read.processes` | `GET /processes` | con el scope |
 | `read.history` | `GET /history` | con el scope |
+| `read.access` | `GET /access` | con el scope |
 | `read.audit` | `GET /audit` | sólo `operator` |
 | `write.alerts` | `alerts.set/delete/silence` y `GET /alerts` | sólo `operator` |
 | `write.channels` | reservado para ntfy en la siguiente entrega | no disponible todavía |
@@ -234,15 +291,16 @@ Matices que conviene no olvidar:
 
 ## Pruebas realizadas
 
-En local (última ejecución, 0.3.1):
+En local (0.3.2, árbol de trabajo):
 
 | Check | Resultado |
 |---|---|
-| `cargo test` | 58/58 |
+| `cargo test` | 68/68 |
 | `cargo clippy --all-targets` | limpio |
 | `cargo fmt --check` | limpio |
-| `bash scripts/smoke.sh` | completo, con batería y `battery_pct` persistido |
+| `bash scripts/smoke.sh` | pendiente de la última ejecución completa |
 | `gradle assembleDebug` | verde |
+| Agente de prueba en `/tmp/opencode/vitals-access` | `access` con sesión de consola, 7 accesos y `source: journal+auth.log` |
 | CI release `v0.3.0` y `v0.3.1` | verde; artefactos y SHA publicados |
 | Actualización local | `vitals-update --force` 0.2.1 → 0.3.1 y APK 0.3.1 encima de 0.2.1 sin perder datos |
 
@@ -289,6 +347,11 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
   `mount = "null"` está corregido, pero no se pudo verificar en el dispositivo
   porque estaba en uso. Memoria ya quedó añadida; temperatura debería aceptarse
   sin `schema error`.
+- **Accesos 0.3.2**: confirmar en `steampunker` que la tarjeta aparece con los
+  datos reales, y en el VPS `hostinguer` que las sesiones SSH, los accesos y el
+  `source: journal+auth.log` coinciden con `journalctl` y `auth.log`. Probar
+  `/api/v1/access?range=7d`, el `400` con `range=forever` y el aviso
+  `ssh.logs_unreadable` cuando el servicio no tiene `adm`/`systemd-journal`.
 - **Energía 0.3.1**: ya está verificado el estado en carga completa. Falta
   desenchufar/enchufar para ver `descargando`, tiempo restante y consumo, y
   comprobar que la gráfica se llena tras unos minutos. En un VPS, confirmar que
@@ -316,13 +379,14 @@ En el A54 (Android 16 / API 37), sobre la instalación limpia y la actualizació
 
 2. Preguntar al usuario si prefiere cerrar las pruebas pendientes o pasar a
    la siguiente entrega. No resetear nada por iniciativa propia.
-3. Si toca cerrar pruebas: temperatura en 0.2.1, descarga de energía en 0.3.1, auditoría y
-   WorkManager; anotar el resultado en este archivo.
-4. 0.3.1 ya está publicado. La siguiente entrega es `kind: "battery"` +
-   diagnósticos o `write.channels` + ntfy, según prioridad.
+3. Si toca cerrar pruebas: temperatura en 0.2.1, descarga de energía en 0.3.1,
+   accesos en 0.3.2, auditoría y WorkManager; anotar el resultado en este
+   archivo.
+4. 0.3.2 está implementada pero **no publicada**. Falta probarla en el host
+   real y en el VPS, y preguntar antes de commit, tag y release.
 5. Si se toca código: `cargo test`, `clippy`, `fmt`, `smoke.sh` y
-   `assembleDebug` antes de release; después `scripts/release.sh`, push de
-   `main` y del tag.
+   `assembleDebug` antes de release; después push a `main`: release-please abre
+   el PR de release y, al fusionarlo, CI publica binarios y APK.
 
 ## Cómo probar desde cero
 
@@ -399,7 +463,7 @@ probar desde la UI.
 | `docs/PRODUCT.md` | Estrategia, permisos y roadmap |
 | `docs/TESTING.md` | Instalación, QR, watchdog y pruebas manuales |
 | `scripts/install.sh` | Instalar/actualizar (sistema o usuario) |
-| `scripts/release.sh` | Bump + changelog + tag (no hace push) |
+| `release-please-config.json` | Versión, changelog y tag automáticos |
 | `.github/workflows/` | CI y release |
 
 ## Verificación obligatoria
@@ -427,16 +491,19 @@ JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
 
 ## Proceso de release
 
-```bash
-scripts/release.sh 0.3.2      # bump Cargo/app/CHANGELOG y tag local
-git push origin main
-git push origin v0.3.2        # CI publica binarios + APK
-vitals-update --check         # o --force para reinstalar el release
-```
+Automático desde `main`:
 
-`release.sh` **no hace push**. El tag dispara `.github/workflows/release.yml`.
-El binario local puede instalarse desde el release con `vitals-update --force`,
-que verifica checksums.
+1. Push (o fusión) a `main` con commits convencionales.
+2. El workflow `Release` ejecuta release-please y abre el PR
+   `chore(release): X.Y.Z` con `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock` y el
+   `versionName` de la app.
+3. Al fusionar ese PR, release-please crea `vX.Y.Z` y la GitHub Release; el
+   mismo workflow compila binarios + APK, publica los assets y amplía las notas.
+
+No hay script de release ni tag manual: `scripts/release.sh` y `cliff.toml` se
+eliminaron con la migración. El despliegue sigue siendo manual; el binario
+local se reinstala desde el release con `vitals-update --force`, que verifica
+checksums.
 
 ## Trampas del entorno (ya resueltas)
 
@@ -478,7 +545,7 @@ que verifica checksums.
   apagada, y una sola notificación de recuperación. **Validado: 32–33 s.**
 - Batería <5 % en 8 h con la vigilancia activa. **Pendiente.**
 - `cargo test`, `cargo clippy --all-targets`, `smoke.sh` y `assembleDebug` en
-  verde. **Verde** (46 tests en 0.2.1; 58 en 0.3.x).
+  verde. **Verde** (46 tests en 0.2.1; 58 en 0.3.1; 68 en 0.3.2).
 
 ## Criterios de aceptación de v0.3.x
 
@@ -489,18 +556,25 @@ que verifica checksums.
 - `/host` devuelve `form_factor` y `virtualized` coherentes.
 - Una base 0.2.x migra sin perder filas; `/history` antiguo sigue funcionando y
   los puntos nuevos incluyen `battery_pct` y `power_w`.
+- Las sesiones de `/access` coinciden con `loginctl list-sessions`, y los
+  accesos/fallos con `journalctl -u ssh -u sshd` y `/var/log/auth.log` (±un
+  evento por la ventana móvil).
+- Con `auth.log` y journal legibles, `source` es `journal+auth.log`; sin ellos,
+  `none` y `ssh.logs_unreadable` en diagnóstico, sin romper `/metrics`.
 - `cargo test`, `clippy`, `fmt`, `smoke.sh` y `assembleDebug` en verde.
 
 Cumplidos en **0.3.1** salvo la prueba dinámica de descarga (desenchufar y
-comprobar tiempo restante/consumo) y la ausencia visual en un VPS.
+comprobar tiempo restante/consumo) y la ausencia visual en un VPS. En **0.3.2**
+falta la validación con tráfico real y la instalación en el VPS.
 
 ## Próximos pasos
 
-1. **0.3.2**: `kind: "battery"` (batería baja sólo descargando, histéresis y
-   recuperación al conectar AC) y diagnósticos de batería desgastada.
-2. **0.3.x**: `write.channels` + ntfy self-hosted en loopback, estado
-   `delivered` en el historial y aviso de entrega. Añadir `read.alerts` al
-   catálogo o documentar definitivamente que `GET /alerts` va con `operator`.
+1. **Cerrar 0.3.2**: smoke completo, prueba en el host real y en el VPS, y
+   release si el usuario lo pide.
+2. **0.3.x**: `kind: "battery"` y diagnósticos de batería desgastada;
+   `write.channels` + ntfy self-hosted en loopback, estado `delivered` en el
+   historial y aviso de entrega. Añadir `read.alerts` al catálogo o documentar
+   definitivamente que `GET /alerts` va con `operator`.
 3. **v0.3**: multi-host, widget, `vitals setup` para VPS y pantalla de permisos
    completa con aprobación desde el móvil.
 4. **v0.4**: compartir por QR con caducidad, `exec.*` real con polkit/oneshot,

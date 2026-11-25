@@ -83,6 +83,11 @@ restante; `/host` añade `form_factor` y `virtualized`; el historial guarda
 bloque en hosts sin batería. Quedan fuera de esta entrega la alerta de batería
 baja, los diagnósticos de batería y la detección de suspensión/reanudación.
 
+**Estado (0.3.2, en preparación):** se cubre el caso VPS con el candidato #9
+llevado a sesiones y autenticación: sesiones activas, accesos aceptados, fallos,
+IPs de origen y configuración de `sshd`, con diagnósticos accionables. No es un
+visor de logs completo ni incluye `btmp`, geoIP o fail2ban.
+
 ## Las 3 apuestas
 
 ### Apuesta 1 — «Avisos que llegan» (alertas sin cuenta)
@@ -196,8 +201,8 @@ Las capabilities de Linux son demasiado gruesas. Se usan, en orden de preferenci
 
 Regla de corte: si una fase se retrasa, se recorta por la derecha (lo último de la lista), nunca se solapan fases. Cada entrega sale con changelog, `smoke.sh` ampliado y una nota de threat model si toca red.
 
-> Estado (noviembre de 2026): de la fase 2 sólo está implementada la primera
-> rebanada, «estado del portátil» (v0.3.1). Multi-host,
+> Estado (noviembre de 2026): de la fase 2 están implementadas dos rebanadas:
+> «estado del portátil» (v0.3.1) y «accesos SSH» (v0.3.2). Multi-host,
 > widget, `vitals setup`, `write.channels` y la aprobación de permisos desde el
 > móvil siguen pendientes.
 

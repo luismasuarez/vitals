@@ -68,6 +68,68 @@ data class Power(
     val batteries: List<Battery>,
 )
 
+data class SshSession(
+    val user: String,
+    val tty: String,
+    val service: String,
+    val remote: Boolean,
+    val host: String?,
+    val since: Long,
+)
+
+data class AuthEvent(
+    val t: Long,
+    val ok: Boolean,
+    val user: String,
+    val host: String,
+    val method: String?,
+    val port: Int?,
+    val invalidUser: Boolean,
+)
+
+data class AccessSource(
+    val host: String,
+    val public: Boolean,
+    val ok: Int,
+    val failed: Int,
+    val firstT: Long,
+    val lastT: Long,
+    val users: List<String>,
+    val new: Boolean,
+)
+
+data class SshConfigInfo(
+    val passwordAuth: Boolean,
+    val rootLogin: String,
+    val files: List<String>,
+)
+
+data class AccessSummary(
+    val sessions: List<SshSession>,
+    val logins24h: Int,
+    val failures24h: Int,
+    val lastLogin: AuthEvent?,
+    val lastFailure: AuthEvent?,
+    val passwordAuth: Boolean,
+    val configRead: Boolean,
+    val rootLogin: String,
+    val source: String,
+)
+
+data class AccessReport(
+    val updated: Long,
+    val range: String,
+    val source: String,
+    val coveredS: Long,
+    val sessions: List<SshSession>,
+    val logins: List<AuthEvent>,
+    val failures: List<AuthEvent>,
+    val sources: List<AccessSource>,
+    val ssh: SshConfigInfo,
+    val totalLogins: Int,
+    val totalFailures: Int,
+)
+
 data class Sample(
     val t: Long,
     val cpu: Cpu,
@@ -77,6 +139,7 @@ data class Sample(
     val temps: List<Temp>,
     val uptime: Long,
     val power: Power? = null,
+    val access: AccessSummary? = null,
 )
 
 data class Point(
@@ -103,7 +166,12 @@ data class HostInfo(
     val virtualized: Boolean = false,
 )
 
-data class DeviceInfo(val id: String, val name: String, val lastSeenAt: Long?)
+data class DeviceInfo(
+    val id: String,
+    val name: String,
+    val scope: String,
+    val lastSeenAt: Long?,
+)
 
 data class AgentInfo(
     val name: String,
@@ -261,6 +329,19 @@ object Wire {
                 Temp(t.optString("label"), t.optDouble("celsius").toFloat())
             },
             uptime = o.optLong("uptime"),
+            access = o.optJSONObject("access")?.let { a ->
+                AccessSummary(
+                    sessions = a.optJSONArray("sessions").sessions(),
+                    logins24h = a.optInt("logins_24h"),
+                    failures24h = a.optInt("failures_24h"),
+                    lastLogin = a.optJSONObject("last_login")?.authEvent(),
+                    lastFailure = a.optJSONObject("last_failure")?.authEvent(),
+                    passwordAuth = a.optBoolean("password_auth", true),
+                    configRead = a.optBoolean("config_read"),
+                    rootLogin = a.optString("root_login", "prohibit-password"),
+                    source = a.optString("source", "none"),
+                )
+            },
             power = o.optJSONObject("power")?.let { p ->
                 Power(
                     acOnline = p.optBoolean("ac_online"),
@@ -345,6 +426,7 @@ object Wire {
                 DeviceInfo(
                     id = d.optString("id"),
                     name = d.optString("name"),
+                    scope = d.optString("scope", "reader"),
                     lastSeenAt = if (d.has("last_seen_at") && !d.isNull("last_seen_at")) d.getLong("last_seen_at") else null,
                 )
             },
@@ -454,6 +536,29 @@ object Wire {
             )
         }
 
+    fun access(text: String): AccessReport {
+        val o = JSONObject(text)
+        val totals = o.optJSONObject("totals")
+        val ssh = o.optJSONObject("ssh")
+        return AccessReport(
+            updated = o.optLong("updated"),
+            range = o.optString("range", "24h"),
+            source = o.optString("source", "none"),
+            coveredS = o.optLong("covered_s"),
+            sessions = o.optJSONArray("sessions").sessions(),
+            logins = o.optJSONArray("logins").authEvents(),
+            failures = o.optJSONArray("failures").authEvents(),
+            sources = o.optJSONArray("sources").accessSources(),
+            ssh = SshConfigInfo(
+                passwordAuth = ssh?.optBoolean("password_auth", true) ?: true,
+                rootLogin = ssh?.optString("root_login", "prohibit-password") ?: "prohibit-password",
+                files = ssh?.optJSONArray("files").strings().orEmpty(),
+            ),
+            totalLogins = totals?.optInt("logins") ?: 0,
+            totalFailures = totals?.optInt("failures") ?: 0,
+        )
+    }
+
     fun errorMessage(text: String): String? = runCatching {
         val o = JSONObject(text)
         when (val error = o.opt("error")) {
@@ -518,6 +623,42 @@ private fun JSONObject.floatOrNull(key: String): Float? = doubleOrNull(key)?.toF
 
 private fun JSONObject.intOrNull(key: String): Int? =
     if (has(key) && !isNull(key)) getInt(key) else null
+
+private fun JSONArray?.sessions(): List<SshSession> = objects { s ->
+    SshSession(
+        user = s.optString("user"),
+        tty = s.optString("tty"),
+        service = s.optString("service", "?"),
+        remote = s.optBoolean("remote"),
+        host = s.stringOrNull("host"),
+        since = s.optLong("since"),
+    )
+}
+
+private fun JSONObject.authEvent(): AuthEvent = AuthEvent(
+    t = optLong("t"),
+    ok = optBoolean("ok"),
+    user = optString("user"),
+    host = optString("host"),
+    method = stringOrNull("method"),
+    port = intOrNull("port"),
+    invalidUser = optBoolean("invalid_user"),
+)
+
+private fun JSONArray?.authEvents(): List<AuthEvent> = objects { it.authEvent() }
+
+private fun JSONArray?.accessSources(): List<AccessSource> = objects { s ->
+    AccessSource(
+        host = s.optString("host"),
+        public = s.optBoolean("public"),
+        ok = s.optInt("ok"),
+        failed = s.optInt("failed"),
+        firstT = s.optLong("first_t"),
+        lastT = s.optLong("last_t"),
+        users = s.optJSONArray("users").strings(),
+        new = s.optBoolean("new"),
+    )
+}
 
 private fun JSONObject.longOrNull(key: String): Long? =
     if (has(key) && !isNull(key)) getLong(key) else null

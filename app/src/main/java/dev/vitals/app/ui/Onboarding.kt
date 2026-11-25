@@ -149,7 +149,7 @@ private fun IntroStep(vm: AppViewModel) {
                 },
             )
             Spacer(Modifier.height(10.dp))
-            PrimaryButton("Usar este código") {
+            PrimaryButton("Conectar") {
                 if (manual.isBlank()) {
                     vm.toast = "Pega primero el código"
                 } else {
@@ -427,8 +427,8 @@ private fun FoundStep(vm: AppViewModel, payload: PairingPayload?) {
         VitalsCard {
             CardHeader("Código leído")
             KeyValue("Host", payload.name.ifBlank { "host" })
-            KeyValue("Endpoints", "${payload.endpoints.size} · ${AppViewModel.kindOf(payload.endpoints.first())}")
-            KeyValue("Pin", payload.pin)
+            KeyValue("Direcciones", "${payload.endpoints.size} · ${AppViewModel.kindOf(payload.endpoints.first())}")
+            KeyValue("Pin del certificado", payload.pin)
             KeyValue("Código", payload.code)
             KeyValue("Caduca", expiry)
         }
@@ -447,8 +447,8 @@ private fun KeyValue(label: String, value: String) {
         Text(
             value,
             color = Palette.Text,
-            fontSize = if (label == "Pin" || label == "Código") 11.sp else 12.5.sp,
-            fontFamily = if (label == "Pin" || label == "Código") FontFamily.Monospace else FontFamily.Default,
+            fontSize = if (label.startsWith("Pin") || label == "Código") 11.sp else 12.5.sp,
+            fontFamily = if (label.startsWith("Pin") || label == "Código") FontFamily.Monospace else FontFamily.Default,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.End,
         )
@@ -466,7 +466,7 @@ private fun PairingStep() {
     ) {
         CircularProgressIndicator(color = Palette.Accent, strokeWidth = 3.dp, modifier = Modifier.size(34.dp))
         Spacer(Modifier.height(18.dp))
-        Text("Intercambiando el código por un token…", color = Palette.Muted, fontSize = 13.sp)
+        Text("Validando el código con el host…", color = Palette.Muted, fontSize = 13.sp)
     }
 }
 
@@ -499,7 +499,7 @@ private fun DoneStep(vm: AppViewModel) {
         Text("Emparejado", color = Palette.Text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
         Text(
-            vm.session?.let { "${it.name} · ${it.endpoints.size} endpoint(s)" } ?: "",
+            vm.session?.let { "${it.name} · ${plural(it.endpoints.size, "dirección", "direcciones")}" } ?: "",
             color = Palette.Muted,
             fontSize = 12.5.sp,
         )

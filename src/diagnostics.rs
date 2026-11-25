@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::alerts::Prediction;
 use crate::api::HostInfo;
+use crate::collect::access::AccessSnapshot;
 use crate::collect::Sample;
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +59,7 @@ fn severity(value: f64) -> (&'static str, &'static str) {
 pub fn report(
     host: &HostInfo,
     sample: Option<&Sample>,
+    access: Option<&AccessSnapshot>,
     endpoints: &[String],
     rules: usize,
     predictions: &[Prediction],
@@ -280,6 +282,147 @@ pub fn report(
         }
     }
 
+    if let Some(access) = access {
+        let config_read = !access.ssh.files.is_empty();
+
+        if config_read && access.ssh.password_auth {
+            report.add(
+                Finding {
+                    id: "ssh.password_auth".into(),
+                    severity: "warning".into(),
+                    title: "SSH acepta contraseñas".into(),
+                    detail: "PasswordAuthentication está activo: cualquiera que llegue al puerto 22 puede intentar adivinar una contraseña. Las claves públicas y fail2ban reducen el riesgo, pero desactivar la contraseña lo elimina.".into(),
+                    evidence: json!({
+                        "password_auth": true,
+                        "files": &access.ssh.files,
+                    }),
+                    suggestion: Some("ssh.disable_password_auth".into()),
+                },
+                Some(Suggestion {
+                    id: "ssh.disable_password_auth".into(),
+                    finding: "ssh.password_auth".into(),
+                    risk: "medium".into(),
+                    command: "printf 'PasswordAuthentication no\\n' | sudo tee /etc/ssh/sshd_config.d/99-vitals.conf >/dev/null && sudo sshd -t && sudo systemctl reload ssh".into(),
+                    explanation: "Deja sólo acceso con clave. Antes de recargar, comprueba que tu clave pública entra; si no, perderás el acceso.".into(),
+                }),
+            );
+        }
+
+        if config_read && access.ssh.root_login.eq_ignore_ascii_case("yes") {
+            report.add(
+                Finding {
+                    id: "ssh.root_login".into(),
+                    severity: "warning".into(),
+                    title: "SSH permite entrar como root con contraseña".into(),
+                    detail: "PermitRootLogin está en yes. Es la cuenta que más se intenta y la que más duele si cae.".into(),
+                    evidence: json!({ "root_login": &access.ssh.root_login }),
+                    suggestion: Some("ssh.restrict_root_login".into()),
+                },
+                Some(Suggestion {
+                    id: "ssh.restrict_root_login".into(),
+                    finding: "ssh.root_login".into(),
+                    risk: "medium".into(),
+                    command: "printf 'PermitRootLogin prohibit-password\\n' | sudo tee /etc/ssh/sshd_config.d/98-vitals-root.conf >/dev/null && sudo sshd -t && sudo systemctl reload ssh".into(),
+                    explanation: "Root sigue pudiendo entrar con clave, pero no con contraseña.".into(),
+                }),
+            );
+        }
+
+        if config_read && access.source == "none" {
+            report.add(
+                Finding {
+                    id: "ssh.logs_unreadable".into(),
+                    severity: "warning".into(),
+                    title: "SSH está instalado pero sus registros no son legibles".into(),
+                    detail: "Hay configuración de OpenSSH, pero el agente no pudo leer ni auth.log ni el journal. Sin eso no puede mostrar accesos ni fallos.".into(),
+                    evidence: json!({ "source": &access.source }),
+                    suggestion: Some("ssh.grant_log_access".into()),
+                },
+                Some(Suggestion {
+                    id: "ssh.grant_log_access".into(),
+                    finding: "ssh.logs_unreadable".into(),
+                    risk: "low".into(),
+                    command: "printf '[Service]\\nSupplementaryGroups=adm systemd-journal\\n' | sudo tee /etc/systemd/system/vitals.service.d/10-logs.conf >/dev/null && sudo systemctl daemon-reload && sudo systemctl restart vitals".into(),
+                    explanation: "Da al servicio acceso de sólo lectura a auth.log y al journal. Si usas un servicio de usuario, añade tu usuario a los grupos adm y systemd-journal.".into(),
+                }),
+            );
+        }
+
+        if access.failures_24h >= 5 {
+            let top = access
+                .sources
+                .iter()
+                .filter(|source| source.failed > 0)
+                .max_by_key(|source| source.failed);
+            let (title, severity) = if access.failures_24h >= 50 {
+                ("Ataque de fuerza bruta contra SSH", "critical")
+            } else {
+                ("Intentos fallidos de entrar por SSH", "warning")
+            };
+            let detail = match top {
+                Some(source) => format!(
+                    "{} intentos fallidos en 24 h desde {} direcciones. La más activa es {} con {}.",
+                    access.failures_24h,
+                    access.sources.iter().filter(|s| s.failed > 0).count(),
+                    source.host,
+                    source.failed
+                ),
+                None => format!("{} intentos fallidos en 24 h.", access.failures_24h),
+            };
+            let suggestion = top
+                .filter(|source| source.host.parse::<std::net::IpAddr>().is_ok())
+                .map(|source| Suggestion {
+                    id: "ssh.block_source".into(),
+                    finding: "ssh.failed_logins".into(),
+                    risk: "medium".into(),
+                    command: format!("sudo ufw deny from {}", source.host),
+                    explanation: "Bloquea la IP más agresiva. Si usas nftables o firewalld, aplica la regla equivalente.".into(),
+                });
+            report.add(
+                Finding {
+                    id: "ssh.failed_logins".into(),
+                    severity: severity.into(),
+                    title: title.into(),
+                    detail,
+                    evidence: json!({
+                        "failures_24h": access.failures_24h,
+                        "sources": access.sources.iter().filter(|s| s.failed > 0).count(),
+                        "top": top.map(|s| json!({ "host": s.host, "failed": s.failed })),
+                    }),
+                    suggestion: suggestion.as_ref().map(|s| s.id.clone()),
+                },
+                suggestion,
+            );
+        }
+
+        if let Some(source) = access
+            .sources
+            .iter()
+            .find(|source| source.new && source.ok > 0)
+        {
+            report.add(
+                Finding {
+                    id: "ssh.new_source".into(),
+                    severity: "warning".into(),
+                    title: "Acceso SSH desde una dirección nueva".into(),
+                    detail: format!(
+                        "Entró como {} desde {}, una dirección que no aparecía en los últimos 24 h. Si no fuiste tú, revoca las claves y revisa los procesos.",
+                        source.users.join(", "),
+                        source.host
+                    ),
+                    evidence: json!({
+                        "host": source.host,
+                        "users": &source.users,
+                        "first_t": source.first_t,
+                        "last_t": source.last_t,
+                    }),
+                    suggestion: None,
+                },
+                None,
+            );
+        }
+    }
+
     // Informational: no alert rules configured.
     if rules == 0 {
         report.findings.push(Finding {
@@ -381,18 +524,22 @@ mod tests {
                 celsius,
             }],
             power: None,
+            access: None,
             uptime: 100,
         }
     }
 
     fn temp_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "vitals-diag-{}-{}",
+            "vitals-diag-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -406,6 +553,7 @@ mod tests {
         let report = report(
             &host(),
             Some(&sample(40.0, 30.0, 50.0)),
+            None,
             &["https://192.168.1.10:8443".into()],
             2,
             &[],
@@ -424,6 +572,7 @@ mod tests {
         let report = report(
             &host(),
             Some(&sample(96.0, 95.0, 92.0)),
+            None,
             &[],
             0,
             &[Prediction {
@@ -466,10 +615,118 @@ mod tests {
     #[test]
     fn a_warming_collector_only_reports_info() {
         let dir = temp_dir();
-        let report = report(&host(), None, &[], 0, &[], &dir);
+        let report = report(&host(), None, None, &[], 0, &[], &dir);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, "info");
         assert!(report.suggestions.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn access_report() -> AccessSnapshot {
+        use crate::collect::access::{Source, SshConfig};
+        AccessSnapshot {
+            updated: 1_700_000_000,
+            source: "journal".into(),
+            covered_s: 2 * 86_400,
+            sessions: Vec::new(),
+            logins: Vec::new(),
+            failures: Vec::new(),
+            sources: vec![Source {
+                host: "203.0.113.9".into(),
+                public: true,
+                ok: 1,
+                failed: 37,
+                first_t: 1_699_999_000,
+                last_t: 1_700_000_000,
+                users: vec!["root".into()],
+                new: true,
+            }],
+            ssh: SshConfig {
+                password_auth: true,
+                root_login: "yes".into(),
+                files: vec!["/etc/ssh/sshd_config".into()],
+            },
+            logins_24h: 1,
+            failures_24h: 37,
+            logins_7d: 1,
+            failures_7d: 37,
+            last_login: None,
+            last_failure: None,
+        }
+    }
+
+    #[test]
+    fn ssh_risks_are_specific_and_actionable() {
+        let dir = temp_dir();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let report = report(
+            &host(),
+            Some(&sample(40.0, 30.0, 50.0)),
+            Some(&access_report()),
+            &["https://192.168.1.10:8443".into()],
+            2,
+            &[],
+            &dir,
+        );
+        let ids: Vec<&str> = report.findings.iter().map(|f| f.id.as_str()).collect();
+        assert!(ids.contains(&"ssh.password_auth"));
+        assert!(ids.contains(&"ssh.root_login"));
+        assert!(ids.contains(&"ssh.failed_logins"));
+        assert!(ids.contains(&"ssh.new_source"));
+        let new_source = report
+            .findings
+            .iter()
+            .find(|finding| finding.id == "ssh.new_source")
+            .unwrap();
+        assert_eq!(new_source.title, "Acceso SSH desde una dirección nueva");
+        assert!(new_source.detail.contains("últimos 24 h"));
+
+        let block = report
+            .suggestions
+            .iter()
+            .find(|s| s.id == "ssh.block_source")
+            .unwrap();
+        assert_eq!(block.command, "sudo ufw deny from 203.0.113.9");
+        for suggestion in &report.suggestions {
+            assert!(report
+                .findings
+                .iter()
+                .any(|finding| finding.id == suggestion.finding));
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unreadable_logs_are_reported_with_the_group_fix() {
+        let dir = temp_dir();
+        let mut access = access_report();
+        access.source = "none".into();
+        access.failures_24h = 0;
+        access.sources.clear();
+        let report = report(
+            &host(),
+            Some(&sample(40.0, 30.0, 50.0)),
+            Some(&access),
+            &[],
+            0,
+            &[],
+            &dir,
+        );
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.id == "ssh.logs_unreadable")
+            .expect("logs finding");
+        assert_eq!(finding.severity, "warning");
+        let fix = report
+            .suggestions
+            .iter()
+            .find(|suggestion| suggestion.id == "ssh.grant_log_access")
+            .expect("log group suggestion");
+        assert!(fix
+            .command
+            .contains("SupplementaryGroups=adm systemd-journal"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -13,7 +13,7 @@ mod tls;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
@@ -182,11 +182,13 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
     let host = build_host_info(&hostname);
     let (tx, _) = broadcast::channel::<Arc<Sample>>(16);
     let last: Arc<Mutex<Option<Arc<Sample>>>> = Arc::new(Mutex::new(None));
+    let access = Arc::new(RwLock::new(None));
 
     let state = AppState {
         store: store.clone(),
         tx: tx.clone(),
         last: last.clone(),
+        access: access.clone(),
         pin: Arc::new(pin.clone()),
         endpoints: endpoints.clone(),
         host: Arc::new(host),
@@ -198,7 +200,7 @@ async fn serve(cfg: Config, paths: Paths) -> Result<()> {
         started: Instant::now(),
     };
 
-    spawn_sampler(cfg.clone(), store.clone(), tx, last);
+    spawn_sampler(cfg.clone(), store.clone(), tx, last, access);
 
     let tls_config = RustlsConfig::from_pem_file(&paths.cert, &paths.key).await?;
     let app = api::router(state.clone());
@@ -259,9 +261,11 @@ fn spawn_sampler(
     store: Arc<Store>,
     tx: broadcast::Sender<Arc<Sample>>,
     last: Arc<Mutex<Option<Arc<Sample>>>>,
+    access: Arc<RwLock<Option<Arc<collect::access::AccessSnapshot>>>>,
 ) {
     tokio::spawn(async move {
         let mut sampler = Sampler::new();
+        let mut access_collector = collect::access::Collector::new();
         let interval = Duration::from_millis(cfg.sample_interval_ms.clamp(250, 60_000));
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -274,7 +278,17 @@ fn spawn_sampler(
 
         loop {
             ticker.tick().await;
-            let sample = Arc::new(sampler.tick());
+            if let Some(snapshot) = access_collector.tick() {
+                if let Ok(mut slot) = access.write() {
+                    *slot = Some(snapshot);
+                }
+            }
+            let mut sample = sampler.tick();
+            sample.access = access
+                .read()
+                .ok()
+                .and_then(|slot| slot.as_ref().map(|snapshot| snapshot.summary()));
+            let sample = Arc::new(sample);
             if let Ok(mut slot) = last.lock() {
                 *slot = Some(sample.clone());
             }

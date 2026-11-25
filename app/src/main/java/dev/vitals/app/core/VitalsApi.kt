@@ -109,6 +109,9 @@ class VitalsApi(val session: Session) {
 
     suspend fun metrics(): Sample = get("/api/v1/metrics") { Wire.sample(it) }
 
+    suspend fun access(range: String): AccessReport =
+        get("/api/v1/access?range=$range") { Wire.access(it) }
+
     suspend fun alerts(): AlertReport = get("/api/v1/alerts") { Wire.alerts(it) }
 
     suspend fun caps(): CapsReport = get("/api/v1/caps") { Wire.caps(it) }

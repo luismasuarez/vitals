@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
@@ -18,14 +19,54 @@ object Palette {
     val Line = Color(0x12FFFFFF)
     val LineStrong = Color(0x24FFFFFF)
     val Text = Color(0xFFE8EDF4)
-    val Muted = Color(0xFF8B97A8)
-    val Dim = Color(0xFF5C6675)
+    // Secondary and tertiary text clear 4.5:1 on both Bg and Surface.
+    val Muted = Color(0xFFA6B1C2)
+    val Dim = Color(0xFF7A8695)
     val Accent = Color(0xFF7BF1A8)
     val AccentDim = Color(0x1F7BF1A8)
     val Rx = Color(0xFF5AA9FF)
     val Tx = Color(0xFFFF8F6B)
     val Warn = Color(0xFFF5D76E)
     val Danger = Color(0xFFFF6B6B)
+}
+
+/**
+ * Shared type roles. Screens must pick from this map instead of inventing a
+ * size per block; the eight steps below cover every label in the app.
+ */
+object Type {
+    val screenTitle = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+    val screenSubtitle = TextStyle(fontSize = 11.5.sp, color = Palette.Muted)
+    val section = TextStyle(
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 1.sp,
+        color = Palette.Muted,
+    )
+    val cardTitle = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = Palette.Text)
+    val metric = TextStyle(
+        fontSize = 28.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = (-0.5).sp,
+        fontFeatureSettings = "tnum",
+        color = Palette.Text,
+    )
+    val value = TextStyle(
+        fontSize = 20.sp,
+        fontWeight = FontWeight.SemiBold,
+        fontFeatureSettings = "tnum",
+        color = Palette.Text,
+    )
+    val body = TextStyle(fontSize = 13.sp, color = Palette.Text)
+    val secondary = TextStyle(fontSize = 12.sp, color = Palette.Muted)
+    val caption = TextStyle(fontSize = 11.sp, color = Palette.Muted)
+    val micro = TextStyle(fontSize = 10.5.sp, color = Palette.Dim)
+    val mono = TextStyle(
+        fontSize = 11.5.sp,
+        fontFamily = FontFamily.Monospace,
+        fontFeatureSettings = "tnum",
+        color = Palette.Text,
+    )
 }
 
 private val colors = darkColorScheme(

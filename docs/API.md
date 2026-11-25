@@ -15,7 +15,7 @@ Cada dispositivo tiene un **scope** fijado al emparejarse:
 
 | Scope | Puede | Se obtiene con |
 |---|---|---|
-| `reader` (defecto) | Todos los `GET` de métricas, procesos e histórico | `vitals pair` |
+| `reader` (defecto) | Todos los `GET` de métricas, procesos, histórico y accesos | `vitals pair` |
 | `operator` | Lo anterior + `POST /command` + `GET /audit` | `vitals pair --operator` |
 
 Un `reader` que llame a una ruta de `operator` recibe `403` (y el intento de
@@ -100,6 +100,19 @@ inmediatamente, así que en la práctica no se ve).
     { "mount": "/", "fs": "ext4", "total": 500000000000, "used": 210000000000, "r_bps": 0, "w_bps": 1024 }
   ],
   "temps": [{ "label": "Tctl", "celsius": 52.0 }],
+  "access": {
+    "sessions": [
+      { "user": "root", "tty": "pts/0", "service": "sshd", "remote": true, "host": "203.0.113.9", "since": 1795470000 }
+    ],
+    "logins_24h": 4,
+    "failures_24h": 37,
+    "last_login": { "t": 1795470000, "ok": true, "user": "root", "host": "203.0.113.9", "method": "publickey", "port": 58635, "invalid_user": false },
+    "last_failure": { "t": 1795469000, "ok": false, "user": "admin", "host": "203.0.113.5", "method": "password", "port": 41102, "invalid_user": true },
+    "password_auth": true,
+    "config_read": true,
+    "root_login": "prohibit-password",
+    "source": "journal+auth.log"
+  },
   "power": {
     "ac_online": true,
     "on_battery": false,
@@ -145,6 +158,14 @@ Notas de semántica:
 - `temps` puede venir vacío si no hay `hwmon` legible.
 - `power` **no aparece** en hosts sin batería legible (servidores, VPS,
   escritorios). Los campos opcionales pueden ser `null`.
+- `access` puede faltar en el primer segundo, antes del primer refresco de
+  accesos. En un host sin sesiones ni registros legibles sigue apareciendo, con
+  `sessions` vacío y `source: "none"`. `sessions` lista sesiones activas de
+  systemd-logind (o `utmp` como respaldo), incluidas las de consola.
+- `failures_24h` incluye intentos con usuario inexistente. `last_login` y
+  `last_failure` son el evento más reciente de cada tipo dentro de la ventana
+  de siete días. Si `config_read` es `false`, `password_auth` y `root_login` son
+  valores por defecto, no lo que dice `sshd`.
 - `status` se normaliza a `charging`, `discharging`, `full`, `not_charging` o
   `unknown`; no se reenvía el texto crudo del driver.
 - `power_w` es la potencia instantánea de la batería: consumo mientras
@@ -488,6 +509,60 @@ el código de una solicitud pendiente. Un `reader` recibe `403`.
 (`scope`) de una aprobación en el host (`manifest`). Las capabilities `exec.*`
 nunca se conceden por scope.
 
+## GET /api/v1/access?range=24h
+
+Cualquier token. Sesiones activas, accesos aceptados y fallos de autenticación
+SSH en la ventana pedida (`24h` por defecto, `7d`). `400` con un `range`
+desconocido y `503` antes del primer refresco.
+
+```json
+{
+  "updated": 1795472100,
+  "range": "24h",
+  "window_s": 86400,
+  "source": "journal+auth.log",
+  "covered_s": 518400,
+  "sessions": [
+    { "user": "root", "tty": "pts/0", "service": "sshd", "remote": true, "host": "203.0.113.9", "since": 1795470000 }
+  ],
+  "logins": [
+    { "t": 1795470000, "ok": true, "user": "root", "host": "203.0.113.9", "method": "publickey", "port": 58635, "invalid_user": false }
+  ],
+  "failures": [
+    { "t": 1795469000, "ok": false, "user": "admin", "host": "203.0.113.5", "method": "password", "port": 41102, "invalid_user": true }
+  ],
+  "sources": [
+    { "host": "203.0.113.9", "public": true, "ok": 4, "failed": 0, "first_t": 1794984900, "last_t": 1795470000, "users": ["root"], "new": false }
+  ],
+  "ssh": {
+    "password_auth": true,
+    "root_login": "prohibit-password",
+    "files": ["/etc/ssh/sshd_config.d/50-cloud-init.conf", "/etc/ssh/sshd_config"]
+  },
+  "totals": { "logins": 4, "failures": 37, "sessions": 1, "remote_sessions": 1 }
+}
+```
+
+`source` es `journal`, `auth.log`, `journal+auth.log` o `none`. `covered_s`
+indica cuánta historia hay realmente, acotada a siete días, y `totals` cuenta
+la ventana completa aunque los arrays se recorten a los 100 eventos más
+recientes. `sources` agrupa por dirección de origen y también se recorta a 100.
+`new` marca una IP cuyo primer evento cae dentro de las últimas 24 h y sólo se
+calcula cuando la cobertura supera un día, para no señalar como nueva una IP
+antigua que el registro ya no alcanza. El journal se lee con un tope de 20 000
+líneas SSH; por encima de eso, `covered_s` y los totales pueden quedarse cortos
+en un host bajo un ataque muy intenso.
+
+El agente lee `journalctl -u ssh -u sshd --since -7d` y `/var/log/auth.log`
+(más `.1` y `/var/log/secure` si existen). Los duplicados entre ambas fuentes
+se colapsan. Las sesiones salen de `/run/systemd/sessions` y, si no hay
+systemd, de `/run/utmp`.
+
+Para que el servicio vea los registros necesita `adm` y `systemd-journal`; el
+`vitals.service` de ejemplo ya los añade en `SupplementaryGroups=`. Sin ellos
+la respuesta sigue siendo válida, con `source: "none"`, y el diagnóstico avisa
+con `ssh.logs_unreadable`.
+
 ## GET /api/v1/diagnostics
 
 Cualquier token. Hallazgos estructurados; no modifica nada.
@@ -510,7 +585,9 @@ Cualquier token. Hallazgos estructurados; no modifica nada.
 
 `severity` es `info`, `warning` o `critical`. Se evalúan: disco, predicción de
 capacidad, memoria, temperatura, alcanzabilidad (sólo loopback), permisos del
-directorio de estado y ausencia de reglas de alerta. `suggestion` enlaza con el
+directorio de estado, ausencia de reglas de alerta y, cuando hay datos de
+acceso, autenticación por contraseña, login de root, fallos repetidos y accesos
+desde una dirección nueva en las últimas 24 h. `suggestion` enlaza con el
 siguiente endpoint.
 
 ## GET /api/v1/suggest

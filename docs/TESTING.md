@@ -1,9 +1,9 @@
 # Probar en el móvil
 
 Estado: app `0.3.1` instalada en el Galaxy A54 (release firmada, sólo
-`arm64-v8a`). Agente `0.3.1` activo; el entorno tiene dispositivos y reglas de
-las pruebas en curso. Para volver a cero, usa el reset destructivo del final de
-este documento.
+`arm64-v8a`); `0.3.2` está construida y pendiente de instalar. Agente `0.3.1`
+activo; el entorno tiene dispositivos y reglas de las pruebas en curso. Para
+volver a cero, usa el reset destructivo del final de este documento.
 
 Para empezar una prueba desde cero, empareja como operator y escanea el QR:
 
@@ -99,6 +99,61 @@ Fuera de casa, activa Tailscale en el móvil: el failover pasa al endpoint
 
 No hay alerta de batería baja ni diagnósticos de batería en esta entrega: la
 tarjeta es sólo visualización. Tampoco se detectan suspensiones.
+
+### Accesos SSH
+
+1. Comprueba que el servicio ve los registros. En una instalación de sistema:
+
+   ```bash
+   systemctl show vitals -p SupplementaryGroups
+   # debe incluir adm y systemd-journal
+   ```
+
+   En una instalación de usuario, tu propio usuario debe pertenecer a `adm` y
+   `systemd-journal` (`id -nG`). Sin acceso, `/metrics` sigue trayendo `access`
+   con `"source":"none"` y **Ajustes → Diagnóstico** muestra
+   `ssh.logs_unreadable` con el comando exacto para corregirlo.
+
+2. Sesiones activas. Abre una SSH al host y deja otra abierta en consola; en
+   **Inicio** la tarjeta **ACCESOS** debe listar ambas con usuario, servicio y
+   antigüedad. La pantalla **Accesos** repite el detalle.
+
+   ```bash
+   curl --cacert ~/.local/state/vitals/tls-cert.pem \
+     -H "Authorization: Bearer <token>" \
+     'https://127.0.0.1:8443/api/v1/access?range=24h'
+   ```
+
+   `sessions` debe coincidir con `loginctl list-sessions` (sin sesiones de
+   `manager` ni `systemd-user`).
+
+3. Accesos y fallos. Provoca un acceso correcto y uno fallido desde otra
+   máquina:
+
+   ```bash
+   ssh usuario@host true
+   ssh usuario-inventado@host true   # fallará
+   ```
+
+   En la app, **Accesos → Últimos accesos** y **Fallos** deben mostrar ambos
+   eventos con IP, método y puerto, y `totals` debe cuadrar con lo visto en
+   `journalctl -u ssh -u sshd` y `/var/log/auth.log`. Cambia a **7 días** y
+   comprueba que los totales crecen o se mantienen.
+
+4. Direcciones. Bajo **Direcciones**, la IP del acceso correcto aparece con
+   `local` o `externa` según el rango (RFC1918/loopback/CGNAT/Tailscale =
+   local). No se marca `nueva` en un host con menos de un día de historia.
+
+5. Diagnóstico. Si `PasswordAuthentication` está en `yes`, aparece
+   `ssh.password_auth` con un comando que escribe un drop-in y recarga `ssh`
+   tras validar con `sshd -t`. Si hay ≥5 fallos en 24 h, aparece
+   `ssh.failed_logins` con `sudo ufw deny from <IP>`; con ≥50 pasa a
+   `critical`. **No ejecutes el comando sin revisar que la IP es hostil y que
+   usas ese firewall.**
+
+6. Vuelve a `/metrics` y confirma que el objeto `access` incluye `sessions`,
+   `logins_24h`, `failures_24h`, `last_login`, `password_auth`, `config_read`
+   y `root_login`.
 
 ### Vigilancia (host caído)
 
@@ -266,7 +321,7 @@ App: descarga `vitals-<version>-android.apk` de la página de releases e
 instálala encima (misma clave de firma, los datos se conservan):
 
 ```bash
-adb install -r vitals-0.3.1-android.apk
+adb install -r vitals-0.3.2-android.apk
 ```
 
 La APK es sólo `arm64-v8a`. El keystore de firma vive en

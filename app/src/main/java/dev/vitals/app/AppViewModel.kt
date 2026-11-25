@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.vitals.app.core.AccessReport
 import dev.vitals.app.core.AgentInfo
 import dev.vitals.app.core.AlertReport
 import dev.vitals.app.core.ApiException
@@ -24,7 +25,9 @@ import dev.vitals.app.core.Session
 import dev.vitals.app.core.SessionStore
 import dev.vitals.app.core.VitalsApi
 import dev.vitals.app.core.Wire
+import dev.vitals.app.ui.AccessTab
 import dev.vitals.app.ui.OnboardStep
+import dev.vitals.app.ui.ResourceTab
 import dev.vitals.app.ui.Screen
 import dev.vitals.app.ui.Transport
 import dev.vitals.app.watchdog.WatchState
@@ -46,17 +49,26 @@ import javax.net.ssl.SSLException
 
 data class Series(
     val cpu: List<Float> = emptyList(),
+    val mem: List<Float> = emptyList(),
     val rx: List<Float> = emptyList(),
     val tx: List<Float> = emptyList(),
 ) {
     fun push(sample: Sample) = Series(
         cpu = (cpu + sample.cpu.total).takeLast(MAX),
+        mem = (mem + memPercent(sample)).takeLast(MAX),
         rx = (rx + sample.net.rxBps.toFloat()).takeLast(MAX),
         tx = (tx + sample.net.txBps.toFloat()).takeLast(MAX),
     )
 
     companion object {
         const val MAX = 60
+
+        private fun memPercent(sample: Sample): Float =
+            if (sample.mem.total > 0) {
+                (sample.mem.used.toFloat() / sample.mem.total * 100f).coerceIn(0f, 100f)
+            } else {
+                0f
+            }
     }
 }
 
@@ -92,12 +104,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var capsBusy by mutableStateOf(false)
     var diagnostics by mutableStateOf<DiagnosticsReport?>(null)
     var diagnosticsError by mutableStateOf<String?>(null)
+    var accessReport by mutableStateOf<AccessReport?>(null)
+    var accessError by mutableStateOf<String?>(null)
+    var accessBusy by mutableStateOf(false)
+    var accessRange by mutableStateOf("24h")
 
     var transport by mutableStateOf(Transport.Idle)
     var latency by mutableStateOf<Long?>(null)
     var endpointIndex by mutableStateOf(0)
 
-    var screen by mutableStateOf(Screen.Home)
+    /** Top-level destinations replace the stack; details push on top of it. */
+    var stack by mutableStateOf(listOf(Screen.Overview))
+        private set
+    val screen: Screen get() = stack.last()
+    val canGoBack: Boolean get() = stack.size > 1
+
+    var resourceTab by mutableStateOf(ResourceTab.Cpu)
+    var accessTab by mutableStateOf(AccessTab.Now)
     var netRange by mutableStateOf("live")
     var procSort by mutableStateOf("cpu")
     var procFilter by mutableStateOf("")
@@ -136,6 +159,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session != null) {
             if (watching) Watchdog.start(getApplication())
             if (transport != Transport.Sse) startStream()
+            if (screen == Screen.Processes) startProcPolling()
         }
     }
 
@@ -187,6 +211,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 seedSeries(effective)
                 if (first.power != null) loadPowerHistory()
+                if (isOperator) loadAlertsQuiet()
                 startStream()
             } catch (e: Throwable) {
                 if (e is ApiException && e.status == 401) {
@@ -206,6 +231,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         main.post {
             series = Series(
                 cpu = points.map { it.cpu.toFloat() },
+                mem = points.map { point ->
+                    val total = host?.memTotal ?: 0L
+                    if (total > 0) (point.mem.toFloat() / total * 100f).coerceIn(0f, 100f) else 0f
+                },
                 rx = points.map { it.netRx.toFloat() },
                 tx = points.map { it.netTx.toFloat() },
             )
@@ -221,7 +250,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun selectEndpoint(index: Int) {
         api?.selectEndpoint(index)
         endpointIndex = index
-        toast = "Probando ${kindOf(endpoints.getOrElse(index) { "" })}"
+        toast = "Probando la conexión (${kindOf(endpoints.getOrElse(index) { "" })})"
         reconnect()
     }
 
@@ -268,7 +297,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             streamFailures++
             if (streamFailures >= 2 && client.session.endpoints.size > 1) {
                 endpointIndex = client.rotateEndpoint()
-                toast = "Sin respuesta: probando ${kindOf(client.activeEndpoint)}"
+                toast = "Sin respuesta. Probando otra dirección (${kindOf(client.activeEndpoint)})…"
             }
             val wait = minOf(1500L * streamFailures, 8000L)
             main.postDelayed({
@@ -313,17 +342,87 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /* --------------------------------- screens ------------------------------ */
 
-    fun selectScreen(target: Screen) {
-        screen = target
-        if (target == Screen.Procs) startProcPolling() else stopProcPolling()
-        if (target == Screen.Net && netRange != "live" && history.isEmpty()) loadHistory(netRange)
-        if (target == Screen.Home && sample?.power != null &&
+    fun navigate(target: Screen) {
+        if (!target.topLevel && stack.lastOrNull() == target) return
+        stack = if (target.topLevel) listOf(target) else stack + target
+        onScreenChanged()
+    }
+
+    /** Kept for call sites that predate the back stack. */
+    fun selectScreen(target: Screen) = navigate(target)
+
+    fun back(): Boolean {
+        if (stack.size <= 1) return false
+        stack = stack.dropLast(1)
+        onScreenChanged()
+        return true
+    }
+
+    fun openResource(tab: ResourceTab) {
+        resourceTab = tab
+        navigate(Screen.Resources)
+    }
+
+    fun openAccess(tab: AccessTab) {
+        accessTab = tab
+        navigate(Screen.Access)
+    }
+
+    fun selectResourceTab(tab: ResourceTab) {
+        resourceTab = tab
+        if (tab == ResourceTab.Network && netRange != "live") loadHistory(netRange)
+        if (tab == ResourceTab.Energy) loadPowerHistory()
+    }
+
+    fun selectAccessTab(tab: AccessTab) {
+        accessTab = tab
+        if (tab == AccessTab.Activity && accessReport == null) loadAccess(quiet = true)
+    }
+
+    fun openProcesses(sort: String = procSort) {
+        if (sort != procSort) {
+            procSort = sort
+            reloadProcs()
+        }
+        navigate(Screen.Processes)
+    }
+
+    private fun onScreenChanged() {
+        val target = screen
+        if (target == Screen.Processes) startProcPolling() else stopProcPolling()
+        if (target == Screen.Resources && resourceTab == ResourceTab.Network &&
+            netRange != "live" && history.isEmpty()
+        ) {
+            loadHistory(netRange)
+        }
+        if (target == Screen.Resources && resourceTab == ResourceTab.Energy) loadPowerHistory()
+        if (target == Screen.Overview && sample?.power != null &&
             (powerHistoryAt == 0L || System.currentTimeMillis() - powerHistoryAt > 300_000)
         ) {
             loadPowerHistory()
         }
-        if (target == Screen.Rules) loadAlerts()
-        if (target == Screen.Caps) loadCaps()
+        if (target == Screen.Overview) loadAlertsQuiet()
+        if (target == Screen.Alerts) loadAlerts()
+        if (target == Screen.Permissions) loadCaps()
+        if (target == Screen.Connection) viewModelScope.launch { refreshMetrics() }
+        if (target == Screen.Access) loadAccess(quiet = accessReport != null)
+        if (target == Screen.Diagnostics && diagnostics == null) loadDiagnostics()
+    }
+
+    fun loadAccess(range: String = accessRange, quiet: Boolean = false) {
+        accessRange = range
+        if (!quiet) accessBusy = true
+        accessError = null
+        viewModelScope.launch {
+            try {
+                val client = api ?: error("Todavía no hay conexión con el host")
+                accessReport = client.access(range)
+            } catch (e: Throwable) {
+                accessError = commandFailure(e)
+            } finally {
+                accessBusy = false
+            }
+        }
     }
 
     fun loadHistory(range: String) {
@@ -333,7 +432,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val client = api ?: return@launch
             runCatching { client.history(range) }
                 .onSuccess { history = it }
-                .onFailure { toast = "Histórico no disponible" }
+                .onFailure { toast = "No se pudo cargar el histórico." }
         }
     }
 
@@ -391,9 +490,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /* --------------------------------- alerts ------------------------------- */
 
+    /** Background refresh for Resumen: never surfaces an error or blocks the UI. */
+    fun loadAlertsQuiet() {
+        if (!isOperator || alertsBusy) return
+        viewModelScope.launch {
+            runCatching { api?.alerts() }.getOrNull()?.let { alertReport = it }
+        }
+    }
+
     fun loadAlerts() {
         if (!isOperator) {
-            alertsError = "Necesitas un token operator. Reempareja con: vitals pair --operator"
+            alertsError = "Necesitas un token de control total (operator). Vuelve a emparejar con: vitals pair --operator"
             return
         }
         if (alertsBusy) return
@@ -409,6 +516,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 alertsBusy = false
             }
         }
+    }
+
+    /** One disk rule per mount, so a second full disk is never left uncovered. */
+    fun applyDiskAlert(mount: String) {
+        val id = "disk-" + (mount.trim('/').replace('/', '-').ifBlank { "root" })
+        val template = JSONObject()
+            .put("id", id)
+            .put("kind", "disk")
+            .put("mount", mount)
+            .put("percent", 85)
+            .put("days", 7)
+        val rules = JSONArray()
+        alertReport?.rules?.filter { it.id != id }?.forEach { rules.put(it.toJson()) }
+        rules.put(template)
+        setAlertRules(rules, "Regla para $mount guardada")
     }
 
     /** The three templates are deliberately small: id, kind and one threshold. */
@@ -434,7 +556,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val rules = JSONArray()
         alertReport?.rules?.filter { it.id != id }?.forEach { rules.put(it.toJson()) }
         rules.put(template)
-        setAlertRules(rules, "Regla $id guardada")
+        val message = when (kind) {
+            "memory" -> "Regla de memoria guardada"
+            "temperature" -> "Regla de temperatura guardada"
+            else -> "Regla guardada"
+        }
+        setAlertRules(rules, message)
     }
 
     fun deleteAlert(id: String) {
@@ -445,7 +572,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val client = api ?: error("Todavía no hay conexión con el host")
                 client.command("alerts.delete", JSONObject().put("id", id))
                 alertReport = client.alerts()
-                toast = "Regla $id eliminada"
+                toast = "Regla eliminada"
             } catch (e: Throwable) {
                 alertsError = commandFailure(e)
             } finally {
@@ -473,7 +600,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun setAlertRules(rules: JSONArray, message: String) {
         if (!isOperator) {
-            alertsError = "Necesitas un token operator. Reempareja con: vitals pair --operator"
+            alertsError = "Necesitas un token de control total (operator). Vuelve a emparejar con: vitals pair --operator"
             return
         }
         alertsBusy = true
@@ -496,7 +623,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadCaps() {
         if (!isOperator) {
-            capsError = "Necesitas un token operator. Reempareja con: vitals pair --operator"
+            capsError = "Necesitas un token de control total (operator). Vuelve a emparejar con: vitals pair --operator"
             return
         }
         if (capsBusy) return
@@ -565,7 +692,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         return when {
             e is ApiException && e.status == 403 ->
-                "El host rechazó la operación: este dispositivo necesita scope operator"
+                "El host rechazó la operación: este dispositivo necesita un token de control total (operator)."
             e is ApiException -> e.message ?: "Error ${e.status}"
             else -> e.message ?: "Error de red"
         }
@@ -636,7 +763,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onboardStep = OnboardStep.Intro
         if (next != null) {
             if (!store.save(next)) {
-                toast = "No pude guardar el token en el Keystore; al reiniciar tendrás que emparejar"
+                toast = "No se pudo cifrar el token en el teléfono; al reiniciar tendrás que emparejar de nuevo."
             }
             session = next
             tokenStorage = store.tokenStorage()
@@ -677,6 +804,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         procs = emptyList()
         endpointIndex = 0
         transport = Transport.Idle
+        stack = listOf(Screen.Overview)
+        resourceTab = ResourceTab.Cpu
+        accessTab = AccessTab.Now
+        netRange = "live"
         pending = null
         pendingSession = null
         autoEnter = false
@@ -690,15 +821,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun friendlyPairing(e: Throwable): String = when {
         e is ApiException && e.status == 401 -> "Código rechazado o caducado. Genera otro con `vitals pair`."
         e is ApiException && e.status == 403 -> "El host alcanzó el límite de dispositivos."
-        isPinMismatch(e) -> "El certificado no coincide con el pin del QR."
+        isPinMismatch(e) -> "El certificado del host no coincide con el pin del QR."
         else -> "No se pudo conectar: ${e.message ?: "error desconocido"}"
     }
 
     private fun friendly(e: Throwable): String = when {
-        isPinMismatch(e) -> "El certificado no coincide con el pin. Vuelve a emparejar."
-        e is SSLException -> "TLS rechazado: ${e.message}"
+        isPinMismatch(e) -> "El certificado del host no coincide con el pin. Vuelve a emparejar."
+        e is SSLException -> "No se pudo establecer una conexión segura: ${e.message}"
         e is IOException -> "Sin conexión con el host: ${e.message}"
-        else -> e.message ?: e::class.java.simpleName
+        else -> e.message ?: "No se pudo leer el host. Inténtalo otra vez."
     }
 
     private fun isPinMismatch(e: Throwable): Boolean {
@@ -721,9 +852,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 hostPart.startsWith("100.") -> "Tailscale"
                 hostPart.startsWith("10.") ||
                     hostPart.startsWith("192.168.") ||
-                    Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(hostPart) -> "LAN"
-                hostPart.startsWith("127.") || hostPart == "localhost" -> "Local"
-                else -> "Remoto"
+                    Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(hostPart) -> "Red local"
+                hostPart.startsWith("127.") || hostPart == "localhost" -> "Este teléfono"
+                else -> "Internet"
             }
         }
     }
