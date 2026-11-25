@@ -5,6 +5,13 @@ El contenido lo genera [release-please](https://github.com/googleapis/release-pl
 a partir de los commits convencionales; no lo edites a mano. La versión y el
 tag los publica el workflow `Release` al fusionar el PR `chore(release)`.
 
+## [0.3.3](https://github.com/luismasuarez/vitals/compare/v0.3.2...v0.3.3) (2026-11-25)
+
+
+### Documentación
+
+* record the v0.3.2 release and operator pairing ([a6ce7fb](https://github.com/luismasuarez/vitals/commit/a6ce7fbb71e0ca573433892712ce4b82e7e7cfba))
+
 ## [0.3.2](https://github.com/luismasuarez/vitals/compare/v0.3.1...v0.3.2) (2026-11-25)
 
 

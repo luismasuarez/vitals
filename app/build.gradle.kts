@@ -13,7 +13,7 @@ plugins {
 // the 303/304 builds installed while testing the 0.3.2 UI locally.
 val vitalsVersionName = providers.gradleProperty("vitalsVersionName").getOrElse(
     /* x-release-please-start-version */
-    "0.3.2"
+    "0.3.3"
     /* x-release-please-end */
 )
 val vitalsVersionCode = providers.gradleProperty("vitalsVersionCode").orNull?.toInt() ?: run {
