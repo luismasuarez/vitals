@@ -5,6 +5,18 @@ El contenido lo genera [release-please](https://github.com/googleapis/release-pl
 a partir de los commits convencionales; no lo edites a mano. La versión y el
 tag los publica el workflow `Release` al fusionar el PR `chore(release)`.
 
+## [0.3.4](https://github.com/luismasuarez/vitals/compare/v0.3.3...v0.3.4) (2026-11-25)
+
+
+### Corregido
+
+* **service:** allow AF_NETLINK for interface enumeration ([4431165](https://github.com/luismasuarez/vitals/commit/4431165a094b496396c7e443dc61ec82f16d5170))
+
+
+### Documentación
+
+* record the v0.3.3 release [skip ci] ([ce8f448](https://github.com/luismasuarez/vitals/commit/ce8f44821f51549f9974e8cfd02978e49b2ddae3))
+
 ## [0.3.3](https://github.com/luismasuarez/vitals/compare/v0.3.2...v0.3.3) (2026-11-25)
 
 
