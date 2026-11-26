@@ -1,6 +1,6 @@
 [package]
 name = "vitals"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Read-only host metrics API over pinned TLS, for a mobile client"
