@@ -5,6 +5,18 @@ El contenido lo genera [release-please](https://github.com/googleapis/release-pl
 a partir de los commits convencionales; no lo edites a mano. La versión y el
 tag los publica el workflow `Release` al fusionar el PR `chore(release)`.
 
+## [0.4.0](https://github.com/luismasuarez/vitals/compare/v0.3.4...v0.4.0) (2026-11-26)
+
+
+### Añadido
+
+* **cli:** add a safe uninstall command ([6f989fa](https://github.com/luismasuarez/vitals/commit/6f989fa1ba277240fa06d112ca62471c84aaf479))
+
+
+### Documentación
+
+* record the v0.3.4 service fix [skip ci] ([8100434](https://github.com/luismasuarez/vitals/commit/81004347da2de5188965c87e8918cf881387cab9))
+
 ## [0.3.4](https://github.com/luismasuarez/vitals/compare/v0.3.3...v0.3.4) (2026-11-25)
 
 
