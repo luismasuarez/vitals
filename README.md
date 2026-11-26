@@ -298,14 +298,14 @@ La convención de commits y el proceso de release están en
 
 ## Estado del proyecto
 
-v0.3.4 publicada: contrato `command`, scopes, auditoría, alertas con histéresis
+v0.4.0 publicada: contrato `command`, scopes, auditoría, alertas con histéresis
 y predicción, watchdog de host caído, token en Keystore, diagnósticos, UI por
 temas, **estado del portátil** (batería, AC, consumo, salud, `form_factor` e
 histórico de energía) y **accesos SSH** (sesiones, accesos, fallos y
 configuración). Servidor, app Android, mockup web y pipeline de release con
 changelog generado por conventional commits y release-please.
 
-Release: https://github.com/luismasuarez/vitals/releases/tag/v0.3.4
+Release: https://github.com/luismasuarez/vitals/releases/tag/v0.4.0
 
 ## Probar en el móvil
 

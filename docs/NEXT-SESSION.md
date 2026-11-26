@@ -53,18 +53,18 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 
 | Cosa | Valor |
 |---|---|
-| Rama / tag | tag publicado **`v0.3.4`**; `main` en el merge de release-please (`51b4982`) |
-| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.3.4 (CI y Release en verde) |
-| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.3.4-android.apk` (versionCode 307) |
-| Servidor local | `systemctl --user vitals`, 0.3.3 (el fix de 0.3.4 es de la unit de sistema); **1 dispositivo**: `Samsung A54` (operator, `5d69f2ec453a`) |
-| Binario instalado | musl 0.3.3 en el servicio de usuario; el VPS pasa a 0.3.4 con `vitals-update` |
+| Rama / tag | tag publicado **`v0.4.0`**; `main` en el merge de release-please (`61aff9e`) |
+| Release | https://github.com/luismasuarez/vitals/releases/tag/v0.4.0 (CI y Release en verde) |
+| Artefactos | binarios musl `x86_64`/`aarch64`, `SHA256SUMS` y `vitals-0.4.0-android.apk` (versionCode 403) |
+| Servidor local | `systemctl --user vitals`, 0.3.3; 0.4.0 añade el CLI de desinstalación y se instala con `vitals-update`. **1 dispositivo**: `Samsung A54` (operator, `5d69f2ec453a`) |
+| Binario instalado | musl 0.3.3 en el servicio de usuario; el release 0.4.0 contiene `vitals uninstall` |
 | Socket de control | `/run/user/1000/vitals/control.sock` |
 | Estado del agente | `~/.local/state/vitals` en uso, `0700`; reglas `disk-root` y `memory`; `disk-root` disparada |
 | Pin actual | `DfQbSeKgP4seLPKq20l_2g` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
-| App instalada | `dev.vitals.app` 0.3.3 (versionCode **306**); 0.3.4 sólo cambia la unit del agente y publica APK 307 sin cambios de app. |
+| App instalada | `dev.vitals.app` 0.3.3 (versionCode **306**); 0.4.0 sólo cambia el CLI del agente y publica APK 403 sin cambios de app. |
 | App, estado UI | Emparejada como **operator** (`Samsung A54`, id `5d69f2ec453a`); los tokens reader y operator antiguos se revocaron. Watchdog **apagado**. |
-| Entrega en curso | 0.3.2 «accesos» + UI por temas + claridad, publicada; 0.3.3 fue documentación y 0.3.4 corrige `AF_NETLINK` en la unit del sistema. La siguiente entrega parte de `main` en `51b4982`. |
+| Entrega en curso | 0.3.2 «accesos» + UI por temas + claridad; 0.3.3 documentación; 0.3.4 fix de `AF_NETLINK`; 0.4.0 añade `vitals uninstall`. La siguiente entrega parte de `main` en `61aff9e`. |
 | Dispositivo de pruebas | Galaxy A54, Android 16 (API 37), por adb en `192.168.1.101:35213` |
 | Firma APK | `~/keystores/vitals-release.jks` + `.properties` (0600); secrets en GitHub |
 
@@ -485,7 +485,7 @@ cd app
 set -a; source ~/keystores/vitals-release.properties; set +a
 JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64 \
   ~/.local/share/gradle-8.11.1/bin/gradle assembleRelease \
-  -PvitalsVersionName=0.3.4 -PvitalsVersionCode=307 \
+  -PvitalsVersionName=0.4.0 -PvitalsVersionCode=403 \
   -PvitalsKeystore="$storeFile" -PvitalsKeystorePassword="$storePassword" \
   -PvitalsKeyAlias="$keyAlias" -PvitalsKeyPassword="$keyPassword"
 ```
@@ -570,7 +570,7 @@ queda pendiente la validación con tráfico real y la instalación en el VPS.
 
 ## Próximos pasos
 
-1. **Validar 0.3.4 en el VPS**: smoke completo, sesiones y registros reales.
+1. **Validar 0.4.0 en el VPS**: instalación, sesiones y registros reales; probar `vitals uninstall --dry-run`.
 2. **0.3.x**: `kind: "battery"` y diagnósticos de batería desgastada;
    `write.channels` + ntfy self-hosted en loopback, estado `delivered` en el
    historial y aviso de entrega. Añadir `read.alerts` al catálogo o documentar
