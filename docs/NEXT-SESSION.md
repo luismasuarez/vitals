@@ -62,7 +62,7 @@ Eres el agente que continúa el proyecto. Antes de tocar código:
 | Estado del agente | `~/.local/state/vitals` en uso, `0700`; reglas `disk-root` y `memory`; `disk-root` disparada |
 | Pin actual | `DfQbSeKgP4seLPKq20l_2g` |
 | Escucha | `192.168.1.104:8443`, `100.71.72.48:8443`, `127.0.0.1:8443` (IPv4) |
-| App instalada | `dev.vitals.app` 0.3.3 (versionCode **306**); 0.4.0 sólo cambia el CLI del agente y publica APK 403 sin cambios de app. |
+| App instalada | `dev.vitals.app` 0.4.0 (versionCode **403**) instalada sobre 0.3.3 sin perder datos; 0.4.0 sólo cambia el CLI del agente. |
 | App, estado UI | Emparejada como **operator** (`Samsung A54`, id `5d69f2ec453a`); los tokens reader y operator antiguos se revocaron. Watchdog **apagado**. |
 | Entrega en curso | 0.3.2 «accesos» + UI por temas + claridad; 0.3.3 documentación; 0.3.4 fix de `AF_NETLINK`; 0.4.0 añade `vitals uninstall`. La siguiente entrega parte de `main` en `61aff9e`. |
 | Dispositivo de pruebas | Galaxy A54, Android 16 (API 37), por adb en `192.168.1.101:35213` |

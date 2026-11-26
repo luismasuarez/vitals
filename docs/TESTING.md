@@ -1,6 +1,6 @@
 # Probar en el móvil
 
-Estado: app `0.3.3` (versionCode 306) instalada en el Galaxy A54 como operator
+Estado: app `0.4.0` (versionCode 403) instalada en el Galaxy A54 como operator
 (release firmada, sólo `arm64-v8a`). Agente `0.3.3` activo; el entorno tiene un
 dispositivo y las reglas de las pruebas en curso. Para volver a cero, usa el
 reset destructivo del final de este documento.
