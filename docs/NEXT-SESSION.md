@@ -453,6 +453,7 @@ probar desde la UI.
 | `src/config.rs` | Config, rutas, state dir `0700` |
 | `src/net.rs` | Interfaces, listeners, filtro IPv4 |
 | `src/tls.rs` | Certificado y pin |
+| `src/uninstall.rs` | `vitals uninstall`: servicio, binario y limpieza opcional |
 | `src/main.rs` | CLI, supervisor, sampler y evaluador |
 | `app/.../core/TokenVault.kt` | Token AES-GCM en Android Keystore |
 | `app/.../core/Session.kt` | Sesión, scope y migración del token |

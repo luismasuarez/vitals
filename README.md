@@ -53,6 +53,23 @@ no-op, si hay una nueva reemplaza el binario y reinicia el servicio sin tocar
 configuración ni datos. Para no recordar la URL queda instalado
 `vitals-update` (acepta `--check`, `--version X.Y.Z`, `--force`).
 
+## Desinstalar
+
+```bash
+sudo vitals uninstall --dry-run     # enseña qué se borraría
+sudo vitals uninstall               # pide confirmación
+sudo vitals uninstall --purge       # borra también datos y configuración
+```
+
+Sin `sudo`, el comando actúa sobre la instalación de usuario. `--dry-run` no
+escribe nada. `--purge` elimina la base, el certificado, las claves TLS y los
+hashes de tokens; es irreversible. Sin `--purge` se conservan datos y
+configuración y el comando imprime cómo borrarlos.
+
+No toca Tailscale, UFW, SSH ni el journal. Si añadiste una regla de UFW para el
+8443, elimínala aparte. Si la app estaba emparejada, usa **Ajustes → Olvidar
+este host**. Una instalación con `--state-dir` personalizado se limpia a mano.
+
 ## Compilar
 
 ```bash

@@ -355,5 +355,27 @@ clave del Keystore, la app pedirá reemparejar (comportamiento esperado).
 | `vitals pair` dice «no encuentro el agente» | el servicio está caído: `systemctl status vitals` |
 | Servicio exit 1 con `Address family not supported` | unit antigua sin `AF_NETLINK`: reinstala `deploy/vitals.service` y reinicia |
 
+## 7. Desinstalar
+
+Hazlo en una VM o contenedor desechable. No lo pruebes contra la instalación
+que estás usando sin querer borrarla.
+
+```bash
+vitals uninstall --dry-run          # debe listar rutas y no tocar nada
+vitals uninstall --yes              # quita servicio, unit, binario y wrapper
+vitals uninstall --purge --yes      # además borra datos y configuración
+vitals uninstall --purge --yes      # segunda vez: idempotente
+```
+
+Comprueba:
+
+- `systemctl --user status vitals` (o `systemctl status vitals` con sudo) ya no
+  encuentra la unit.
+- `command -v vitals` no devuelve nada.
+- Sin `--purge`, el state dir sigue existiendo.
+- Con `--purge`, no quedan `/var/lib/vitals`, `/var/lib/private/vitals`,
+  `~/.local/state/vitals` ni `/etc/vitals`.
+- Tailscale, las reglas de UFW y el journal siguen intactos.
+
 El repositorio es privado. Para descargas públicas:
 `gh repo edit --visibility public`.

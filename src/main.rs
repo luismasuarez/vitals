@@ -10,6 +10,7 @@ mod diagnostics;
 mod net;
 mod store;
 mod tls;
+mod uninstall;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -77,6 +78,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: CapsCmd,
     },
+    /// Stop and remove the agent, service and optionally all local data.
+    Uninstall(uninstall::Args),
 }
 
 #[derive(Subcommand)]
@@ -117,6 +120,10 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    if let Cmd::Uninstall(args) = &cli.cmd {
+        return uninstall::run(args);
+    }
+
     let paths = Paths::resolve(cli.state_dir.as_deref())?;
     let sockets = Paths::control_candidates(cli.state_dir.as_deref());
 
@@ -143,6 +150,7 @@ async fn main() -> Result<()> {
             CapsCmd::Approve { target, yes } => cli::caps_approve(&sockets, &target, yes),
             CapsCmd::Revoke { device_id, cap } => cli::caps_revoke(&sockets, &device_id, &cap),
         },
+        Cmd::Uninstall(_) => unreachable!("uninstall returns before resolving paths"),
     }
 }
 
